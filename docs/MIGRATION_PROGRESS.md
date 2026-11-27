@@ -234,9 +234,14 @@ Selected full and partial class-template specializations share the primary
 canonical identity where supported. Explicit full specializations publish the
 primary `TemplateDeclId` and concrete `outer_template_args`; selected partial
 nested classes preserve both their enclosing specialization and their own entity
-identity. Class-template-owned member specializations compose the enclosing
-class TypeId with the member template's own canonical arguments; the enclosing
-owner is packed outside the member argument list, so owner and member arguments
+identity. Named classes declared inside an explicit full specialization publish
+their own entities under a declaration owner keyed by the concrete canonical
+specialization. `test_full_specialization_nested_conversion_ret0.cpp` checks
+qualified lookup, overload selection, and reference conversion for two full
+specializations with same-named nested classes. Class-template-owned member
+specializations compose the enclosing class TypeId with the member template's
+own canonical arguments. The enclosing owner is packed outside the member
+argument list, so owner and member arguments
 remain separately observable. Nested member class templates recursively compose
 each template-owned enclosing pattern, preserving the complete owner chain.
 Selected member partial instantiations recover effective owner bindings from the

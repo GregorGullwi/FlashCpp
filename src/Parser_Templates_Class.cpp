@@ -2278,6 +2278,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				is_union);
 			if (primary_class_declaration != nullptr && primary_class_declaration->has_template_decl_id()) {
 				struct_ref.set_canonical_specialization_owner_template_decl_id(primary_class_declaration->template_decl_id());
+				struct_ref.set_outer_template_bindings(primary_class_declaration->outer_template_param_names(), template_args);
 			}
 
 			// Create struct type info first so we can reference it
@@ -2574,46 +2575,32 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 							return static_result;
 						}
 						continue;
-					} else if (peek() == "struct"_tok || peek() == "class"_tok) {
-						// Handle nested struct/class declarations inside full specialization body
-						advance(); // consume 'struct' or 'class'
-
-						// Skip C++11 attributes
+					} else if (peek() == "struct"_tok || peek() == "class"_tok || peek() == "union"_tok) {
+						SaveHandle nested_pos = save_token_position();
+						const Token class_key = advance();
 						skip_cpp_attributes();
-
-						// Skip struct name if present
-						if (peek().is_identifier()) {
-							advance(); // consume struct name
-						}
-
-						// Skip template arguments if present (e.g., struct Wrapper<int>)
-						if (peek() == "<"_tok) {
-							parse_explicit_template_arguments();
-						}
-
-						// Skip 'final' specifier if present
-						if (peek() == "final"_tok) {
+						if (peek() == "{"_tok) {
 							advance();
+							const ParseResult anonymous = parse_anonymous_union_member_body(struct_ref, class_key.value() == "union"sv, current_access);
+							if (anonymous.is_error()) {
+								return anonymous;
+							}
+							discard_saved_token(nested_pos);
+							continue;
 						}
-
-						// Skip base class list if present (e.g., struct Frame : public Base)
-						if (peek() == ":"_tok) {
-							advance(); // consume ':'
-							while (!peek().is_eof() && peek() != "{"_tok && peek() != ";"_tok) {
-								advance();
+						if (peek().is_identifier()) {
+							advance();
+							if (peek() == "{"_tok || peek() == ";"_tok || peek() == ":"_tok || peek() == "final"_tok) {
+								restore_token_position(nested_pos);
+								const StringHandle owner = getStructQualifiedNameForRegistration(struct_ref);
+								const ParseResult nested = parseNestedClassDeclaration(struct_ref, *struct_info, owner, current_access);
+								if (nested.is_error()) {
+									return nested;
+								}
+								continue;
 							}
 						}
-
-						// Skip to body or semicolon
-						if (peek() == "{"_tok) {
-							skip_balanced_braces();
-						}
-
-						// Consume trailing semicolon
-						if (peek() == ";"_tok) {
-							advance();
-						}
-						continue;
+						restore_token_position(nested_pos);
 					} else if (peek() == "friend"_tok) {
 						// Handle friend declarations inside full specialization body
 						auto friend_result = parse_friend_declaration();
@@ -3489,14 +3476,6 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				return ParseResult::error(struct_info_ptr->getFinalizationError(), Token());
 			}
 
-			// Give the full specialization the same canonical identity as an implicit
-			// instantiation of the primary: templateSpecialization(primary, args). This is
-			// recorded through a dedicated owner field, not the injected-class pattern, so
-			// member lookup keeps seeing the specialization's own members.
-			if (primary_class_declaration != nullptr && primary_class_declaration->has_template_decl_id()) {
-				struct_ref.set_canonical_specialization_owner_template_decl_id(primary_class_declaration->template_decl_id());
-				struct_ref.set_outer_template_bindings(primary_class_declaration->outer_template_param_names(), template_args);
-			}
 			{
 				CanonicalTypeTable& canonical_types = requireFrontendContext().canonicalTypes();
 				const CanonicalTypeImport imported_specialization = importCanonicalClassTypeInfo(canonical_types, struct_type_info);

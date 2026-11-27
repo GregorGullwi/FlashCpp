@@ -688,9 +688,6 @@ before they can be ranked.
   without a concrete record must stay excluded.
 - Support conversion-template results whose dependent array bounds or packs are
   not concrete.
-- Qualified lookup of `Outer<int>::Inner` can fail when `Inner` is declared in
-  an explicit full specialization of `Outer`. The parser reports `Unknown
-  nested type` before it can collect conversion candidates.
 - Seed built-in subscript candidates from conversion templates whose return
   pointer or array-reference shape still depends on the template parameters.
 

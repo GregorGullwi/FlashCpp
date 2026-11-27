@@ -37,6 +37,7 @@ public:
 		Alias = 2,
 		Variable = 3,
 		ClassPartialEnvironment = 4,
+		ClassFullSpecialization = 5,
 	};
 
 	TemplateDeclId publishPrimaryClassTemplate(OwnerId owner, StringHandle name) {
@@ -78,6 +79,14 @@ public:
 			declaration_identity,
 			DeclarationKind::ClassPartialEnvironment,
 			normalized_pattern.value);
+	}
+
+	// Named classes declared in a full specialization belong to that concrete definition.
+	TemplateDeclId publishClassFullSpecialization(TemplateDeclId primary, TypeId specialization) {
+		if (!primary || !specialization) {
+			throw InternalError("template decl: invalid full specialization key");
+		}
+		return publishDeclaration(ownerIdFromTemplateDecl(primary), StringHandle{}, DeclarationKind::ClassFullSpecialization, specialization.value);
 	}
 
 	// Member alias-template primaries publish under the same OwnerId
@@ -301,10 +310,11 @@ private:
 		if (!owner) {
 			throw InternalError("template decl: invalid OwnerId");
 		}
-		if (!name.isValid() && kind != DeclarationKind::ClassPartialEnvironment) {
+		const bool structural_class_key = kind == DeclarationKind::ClassPartialEnvironment || kind == DeclarationKind::ClassFullSpecialization;
+		if (!name.isValid() && !structural_class_key) {
 			throw InternalError("template decl: invalid template name");
 		}
-		if (kind != DeclarationKind::Function && kind != DeclarationKind::ClassPartialEnvironment && signature_index != 0u) {
+		if (kind != DeclarationKind::Function && !structural_class_key && signature_index != 0u) {
 			throw InternalError("template decl: non-function primary signature index must be 0");
 		}
 		const Key key{owner.value, name, kind, signature_index};
