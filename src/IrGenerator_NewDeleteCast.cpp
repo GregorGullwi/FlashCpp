@@ -1294,13 +1294,18 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 		if (imported.status != CanonicalTypeImportStatus::Supported) {
 			return {};
 		}
-		const TypeId stripped = table.withoutTopLevelQualifiers(imported.type);
+		TypeId stripped = imported.type;
+		const CanonicalTypeNode outer = table.node(stripped);
+		if (outer.kind == CanonicalTypeKind::LValueReference || outer.kind == CanonicalTypeKind::RValueReference) {
+			stripped = outer.child;
+		}
+		stripped = table.withoutTopLevelQualifiers(stripped);
 		const CanonicalTypeKind kind = table.node(stripped).kind;
 		if (kind != CanonicalTypeKind::Pointer && kind != CanonicalTypeKind::MemberObjectPointer && kind != CanonicalTypeKind::MemberFunctionPointer) {
 			return {};
 		}
 		transaction.commit();
-		return imported.type;
+		return stripped;
 	};
 	auto getStructTypeName = [&](TypeIndex type_index) -> StringHandle {
 		if (type_index.category() != TypeCategory::Struct || !type_index.is_valid()) {

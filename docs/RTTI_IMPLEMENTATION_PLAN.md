@@ -43,6 +43,13 @@ runtimes on both platforms:
 | 8 | `dynamic_cast` calls MSVC `__RTDynamicCast(src_ptr, vfDelta, src_type, dst_type, isReference)` | `IRConverter_ConvertMain.cpp::handleDynamicCast` |
 | 9 | Failed reference casts call `__dynamic_cast_throw_bad_cast` | `IRConverter_ConvertMain.cpp::handleDynamicCast` |
 | 10 | `??_R0` Type Descriptors for built-in/arithmetic types (`H` int, `M` float, `_N` bool, `X` void, …) — no more hash placeholders; cross-TU stable typeid identity for built-ins | `ObjFileWriter_RTTI.cpp::get_or_create_builtin_type_descriptor`, `IRConverter_ConvertMain.cpp::handleTypeid` |
+| 11 | Canonical pointer and member-pointer `??_R0` Type Descriptors with cross-TU COMDAT coalescing | `ObjFileWriter_RTTI.cpp::get_or_create_canonical_typeinfo` |
+
+Pointer and member-pointer descriptors preserve the declaring class, callable
+signature, and nested qualifiers in the MSVC name. The descriptor lives in
+writable storage so the CRT can cache the demangled name for `type_info::name()`.
+Class-template names in these descriptors support type arguments and ordinary
+integral non-type arguments. Other template-argument encodings remain open.
 
 ---
 

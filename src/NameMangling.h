@@ -310,20 +310,14 @@ inline const TypeInfo* tryResolvePublishedMemberPointerOwnerTypeInfo(
 	return nullptr;
 }
 
-// MSVC encodes integers as [?] <0-9 for 1..10> | <A-P hex digits> @.
 template <typename OutputType>
-inline void appendMsvcNumber(OutputType& output, int64_t number) {
-	if (number < 0) {
-		output += '?';
-		number = -number;
-	}
-	if (number >= 1 && number <= 10) {
-		output += static_cast<char>('0' + static_cast<int>(number) - 1);
+inline void appendMsvcUnsignedNumber(OutputType& output, uint64_t value) {
+	if (value >= 1 && value <= 10) {
+		output += static_cast<char>('0' + static_cast<int>(value) - 1);
 		return;
 	}
 	char digits[16];
 	size_t count = 0;
-	uint64_t value = static_cast<uint64_t>(number);
 	if (value == 0) {
 		digits[count++] = 'A';
 	} else {
@@ -336,6 +330,17 @@ inline void appendMsvcNumber(OutputType& output, int64_t number) {
 		output += digits[--count];
 	}
 	output += '@';
+}
+
+// MSVC encodes integers as [?] <0-9 for 1..10> | <A-P hex digits> @.
+template <typename OutputType>
+inline void appendMsvcNumber(OutputType& output, int64_t number) {
+	uint64_t magnitude = static_cast<uint64_t>(number);
+	if (number < 0) {
+		output += '?';
+		magnitude = 0 - magnitude;
+	}
+	appendMsvcUnsignedNumber(output, magnitude);
 }
 
 template <typename OutputType>
@@ -534,24 +539,20 @@ inline void appendMsvcMemberFunctionNameQualifierCode(OutputType& output, bool i
 }
 
 template <typename OutputType>
-inline void appendMsvcMemberFunctionPointerQualifierCode(
-	OutputType& output,
-	const FunctionSignature& sig) {
+inline void appendMsvcThisQualifierCode(OutputType& output, ReferenceQualifier ref, CVQualifier cv) {
 	output += 'E';
-	if (sig.function_reference_qualifier == ReferenceQualifier::LValueReference) {
+	if (ref == ReferenceQualifier::LValueReference) {
 		output += 'G';
-	} else if (sig.function_reference_qualifier == ReferenceQualifier::RValueReference) {
+	} else if (ref == ReferenceQualifier::RValueReference) {
 		output += 'H';
 	}
-	appendCVQualifier(
-		output,
-		sig.is_const && sig.is_volatile
-			? CVQualifier::ConstVolatile
-			: sig.is_const
-				? CVQualifier::Const
-				: sig.is_volatile
-					? CVQualifier::Volatile
-					: CVQualifier::None);
+	appendCVQualifier(output, cv);
+}
+
+template <typename OutputType>
+inline void appendMsvcMemberFunctionPointerQualifierCode(OutputType& output, const FunctionSignature& sig) {
+	const CVQualifier cv = (sig.is_const ? CVQualifier::Const : CVQualifier::None) | (sig.is_volatile ? CVQualifier::Volatile : CVQualifier::None);
+	appendMsvcThisQualifierCode(output, sig.function_reference_qualifier, cv);
 	// MSVC encodes the callable's calling convention between its cv-qualifier
 	// and return type, mirroring the free-function signature encoding.
 	appendMsvcCallingConventionCode(output, sig.calling_convention);

@@ -850,11 +850,6 @@ void ObjectFileWriter::emitVagueLinkageComdatRdataNamed(std::string_view externa
 	emitVagueLinkageComdatRdata(external_symbol_name, data, relocations, external_symbol_value);
 }
 
-void ObjectFileWriter::emit_vague_linkage_comdat_rdata(std::string_view external_symbol_name, std::span<const char> data,
-	std::span<const ComdatReloc> relocations, uint32_t external_symbol_value) {
-	emitVagueLinkageComdatRdata(external_symbol_name, data, relocations, external_symbol_value);
-}
-
 void ObjectFileWriter::beginNativeComdatFunction(std::string_view mangled_name, uint32_t unified_offset) {
 	native_comdat_function_active_ = true;
 	native_comdat_function_start_ = unified_offset;
