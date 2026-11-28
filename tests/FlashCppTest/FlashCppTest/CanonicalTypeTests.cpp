@@ -2445,6 +2445,72 @@ TEST_CASE("Reference-return callable partial patterns select through published e
 	CHECK(patterns == 3);
 }
 
+TEST_CASE("Dependent-noexcept callable partials select through published environments") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	std::ifstream fixture("tests/test_canonical_partial_dependent_noexcept_environment_ret0.cpp");
+	REQUIRE(fixture.is_open());
+	const std::string code((std::istreambuf_iterator<char>(fixture)), std::istreambuf_iterator<char>());
+	CompileContext compile_context;
+	compile_context.setInputFile("dependent_noexcept_partial_environment.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	const uint64_t fallback_before = gPartialPatternNameFallbackCount;
+	REQUIRE(!parser.parse().is_error());
+	CHECK(gPartialPatternNameFallbackCount == fallback_before);
+	size_t patterns = 0;
+	for (const ASTNode& node : parser.get_nodes()) {
+		if (!node.is<StructDeclarationNode>()) continue;
+		const StructDeclarationNode& pattern = node.as<StructDeclarationNode>();
+		if (!gTemplateRegistry.isClassTemplateSpecializationPattern(&pattern)) continue;
+		++patterns;
+		const TemplateDeclId environment = pattern.partial_specialization_environment();
+		CHECK(static_cast<bool>(environment));
+		// [temp.spec.partial]/1: the environment, not the synthesized `$pattern`
+		// spelling, is the key to the partial's StructTypeInfo record.
+		CHECK(gTemplateRegistry.tryGetPartialPatternStructInfo(environment) != nullptr);
+	}
+	CHECK(patterns == 3);
+}
+
+TEST_CASE("Callable matcher rejects a different dependent noexcept identity") {
+	clearLegacyTypeTablesForTesting();
+	initialize_native_types();
+	const TypeIndex int_type = nativeTypeIndex(TypeCategory::Int);
+	const TypeIndex function_pointer = nativeTypeIndex(TypeCategory::FunctionPointer);
+	FunctionType return_type;
+	return_type.type_index = int_type;
+	FunctionType parameter_type;
+	parameter_type.type_index = int_type;
+	const auto make_arg = [&](ExprId dependent_noexcept) {
+		FunctionSignature signature;
+		signature.setReturnType(return_type);
+		signature.setParameterTypes({parameter_type});
+		signature.dependent_noexcept = dependent_noexcept;
+		TemplateTypeArg argument;
+		argument.type_index = function_pointer;
+		argument.setFunctionSignature(signature);
+		return argument;
+	};
+	const TemplateTypeArg pattern = make_arg(ExprId{11});
+	const TemplateTypeArg matching = make_arg(ExprId{11});
+	const TemplateTypeArg different = make_arg(ExprId{12});
+	const TemplateTypeArg plain = make_arg(ExprId{});
+	std::unordered_set<StringHandle, StringHandleHash> names;
+	std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> bindings;
+	CHECK(TemplatePattern::matchFunctionSignature(pattern, matching, names, bindings));
+	// A different retained dependent expression must not select the partial even
+	// though both signatures report `is_noexcept == false`.
+	CHECK_FALSE(TemplatePattern::matchFunctionSignature(pattern, different, names, bindings));
+	// A concrete signature without a dependent specification stays a non-deduced
+	// exception-specification context and keeps matching the pattern.
+	CHECK(TemplatePattern::matchFunctionSignature(pattern, plain, names, bindings));
+}
+
 TEST_CASE("Partial pattern normalization keeps deep declarators off the native stack") {
 	clearLegacyTypeTablesForTesting();
 	FrontendContext context;

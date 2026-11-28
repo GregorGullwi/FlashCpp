@@ -551,6 +551,17 @@ struct TemplatePattern {
 			pattern_sig.is_noexcept != concrete_sig.is_noexcept) {
 			return false;
 		}
+		// [except.spec]/13: a dependent noexcept(expr) is retained as a
+		// context-local ExprId until substitution. Two different expressions
+		// both leave `is_noexcept` false, so the boolean comparison alone would
+		// let the wrong exception specification select this partial. Compare the
+		// published identity when both sides carry one; a concrete signature
+		// without a dependent specification stays a non-deduced context and is
+		// still matched by the boolean check above.
+		if (pattern_sig.dependent_noexcept && concrete_sig.dependent_noexcept &&
+			pattern_sig.dependent_noexcept != concrete_sig.dependent_noexcept) {
+			return false;
+		}
 		const size_t fixed_count = pack != nullptr ? pattern_parameter_count - 1 : pattern_parameter_count;
 		if (pattern_sig.hasStructuredTypes() && concrete_sig.hasStructuredTypes()) {
 			if (!matchStructuredSignatureType(pattern_sig.return_type(), concrete_sig.return_type(), false, template_param_names,

@@ -4402,6 +4402,76 @@ inline void checkReferenceReturnPartialPatternIdentityIndependence() {
 	check_environment_partition(reverse_decls, reverse_primary, reverse_patterns.value_return, reverse_patterns.reference_return);
 }
 
+// [except.spec]/13: a retained dependent noexcept expression is carried as a
+// context-local ExprId on the canonical Function node. Reversed interning must
+// not merge two different expressions, nor either of them with a plain noexcept
+// or a plain callable, and the environment must split on the same identity.
+inline void checkDependentNoexceptPartialPatternIdentityIndependence() {
+	const TemplateDeclId primary{8791};
+	const ExprId first_noexcept{41};
+	const ExprId second_noexcept{42};
+	const StringHandle first_identity = StringTable::getOrInternStringHandle("dependent-noexcept-pattern-first");
+	const StringHandle second_identity = StringTable::getOrInternStringHandle("dependent-noexcept-pattern-second");
+	struct Patterns {
+		TypeId first;
+		TypeId second;
+		TypeId plain_noexcept;
+		TypeId plain;
+	};
+	const auto build = [&](CanonicalTypeTable& table, bool reverse) {
+		if (reverse) {
+			table.builtin(CanonicalBuiltinKind::Char);
+		}
+		const TypeId parameter = table.templateParameter(primary, 0);
+		const TypeId parameters[] = {table.builtin(CanonicalBuiltinKind::Int)};
+		const auto make_function = [&table, parameter, &parameters](bool is_noexcept, ExprId dependent_noexcept) {
+			return table.function(parameter, parameters, false, CVQualifier::None, ReferenceQualifier::None, is_noexcept,
+				CanonicalCallingConvention::Default, CanonicalDllLinkage::None, dependent_noexcept);
+		};
+		const auto make_pattern = [&table, primary](TypeId callable) {
+			const CanonicalTemplateArgument arguments[] = {CanonicalTemplateArgument::makeType(callable)};
+			return table.templateSpecialization(primary, arguments);
+		};
+		return Patterns{
+			make_pattern(table.pointer(make_function(false, first_noexcept))),
+			make_pattern(table.pointer(make_function(false, second_noexcept))),
+			make_pattern(table.pointer(make_function(true, ExprId{}))),
+			make_pattern(table.pointer(make_function(false, ExprId{}))),
+		};
+	};
+	CanonicalTypeTable forward;
+	const Patterns forward_patterns = build(forward, false);
+	require(forward_patterns.first != forward_patterns.second);
+	require(forward_patterns.first != forward_patterns.plain_noexcept);
+	require(forward_patterns.first != forward_patterns.plain);
+	require(forward_patterns.second != forward_patterns.plain_noexcept);
+	CanonicalTypeTable reverse;
+	const Patterns reverse_patterns = build(reverse, true);
+	require(sameStructure(forward, forward_patterns.first, reverse, reverse_patterns.first));
+	require(!sameStructure(forward, forward_patterns.first, reverse, reverse_patterns.second));
+	require(!sameStructure(forward, forward_patterns.first, reverse, reverse_patterns.plain_noexcept));
+	require(!sameStructure(forward, forward_patterns.first, reverse, reverse_patterns.plain));
+	const auto check_environment_partition = [&](TemplateDeclTable& decls, TemplateDeclId pattern_primary, TypeId pattern,
+		TypeId other_pattern, TypeId third_pattern, TypeId fourth_pattern) {
+		const TemplateDeclId first = decls.publishClassPartialEnvironment(pattern_primary, pattern, first_identity);
+		require(decls.publishClassPartialEnvironment(pattern_primary, pattern, first_identity) == first);
+		require(decls.publishClassPartialEnvironment(pattern_primary, pattern, second_identity) != first);
+		require(decls.publishClassPartialEnvironment(pattern_primary, other_pattern, first_identity) != first);
+		require(decls.publishClassPartialEnvironment(pattern_primary, third_pattern, first_identity) != first);
+		require(decls.publishClassPartialEnvironment(pattern_primary, fourth_pattern, first_identity) != first);
+	};
+	const OwnerId owner{8792};
+	const StringHandle name = StringTable::getOrInternStringHandle("DependentNoexceptPartialIdentity");
+	TemplateDeclTable forward_decls;
+	const TemplateDeclId forward_primary = forward_decls.publishPrimaryClassTemplate(owner, name);
+	check_environment_partition(forward_decls, forward_primary, forward_patterns.first, forward_patterns.second,
+		forward_patterns.plain_noexcept, forward_patterns.plain);
+	TemplateDeclTable reverse_decls;
+	const TemplateDeclId reverse_primary = reverse_decls.publishPrimaryClassTemplate(owner, name);
+	check_environment_partition(reverse_decls, reverse_primary, reverse_patterns.second, reverse_patterns.first,
+		reverse_patterns.plain_noexcept, reverse_patterns.plain);
+}
+
 // The shape is a by-value query result; a future field must not quietly re-add
 // padding to it.
 static_assert(sizeof(CanonicalPointerShape) == 10, "pointer shape stays a packed by-value result");
@@ -4758,6 +4828,7 @@ inline int run() {
 	checkDoublePointerPartialPatternIdentityIndependence();
 	checkSignaturePackPartialPatternIdentityIndependence();
 	checkReferenceReturnPartialPatternIdentityIndependence();
+	checkDependentNoexceptPartialPatternIdentityIndependence();
 	checkSpecializationFieldSchemas();
 	checkNestedFieldSchemas();
 	checkRecordMemberProperties();

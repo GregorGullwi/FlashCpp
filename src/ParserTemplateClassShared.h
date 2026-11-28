@@ -379,6 +379,21 @@ inline bool isCallablePartialPatternSyntax(const TypeSpecifierNode& syntax) {
 	return syntax.category() != TypeCategory::MemberFunctionPointer && syntax.category() != TypeCategory::MemberObjectPointer;
 }
 
+// [except.spec]/13: a retained noexcept(expr) whose operand is template
+// dependent is not evaluated while the pattern is registered. The parser
+// interns the operand into an ExprId, clears the plain noexcept bit, and keeps
+// the AST expression for later substitution. That ExprId is the canonical
+// identity of the exception specification: the importer carries it into the
+// Function node instead of projecting a spelling. A raw retained expression
+// without a published identity, or a plain noexcept bit paired with a
+// dependent identity, is malformed and must fail closed.
+inline bool partialPatternNoexceptIsSupported(const FunctionSignature& signature) {
+	if (!signature.noexcept_expression.has_value()) {
+		return !static_cast<bool>(signature.dependent_noexcept);
+	}
+	return static_cast<bool>(signature.dependent_noexcept) && !signature.is_noexcept;
+}
+
 // Compose the canonical function identity from imported return and parameter
 // types. C++20 [dcl.fct]/5 adjusts function and array parameters to pointers
 // and removes top-level parameter cv when forming the function type.
@@ -513,8 +528,7 @@ inline std::optional<TypeId> tryImportCanonicalPartialTypePattern(CanonicalTypeT
 			result = shaped.type;
 		} else if (bare_function || callable) {
 			const FunctionSignature& signature = syntax.function_signature();
-			if (signature.class_name.isValid() || (signature.noexcept_expression.has_value() && !signature.dependent_noexcept) ||
-				(signature.is_noexcept && signature.dependent_noexcept)) {
+			if (signature.class_name.isValid() || !partialPatternNoexceptIsSupported(signature)) {
 				return std::nullopt;
 			}
 			if (frame.next_argument < count) {
