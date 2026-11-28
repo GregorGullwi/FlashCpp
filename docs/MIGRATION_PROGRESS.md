@@ -385,6 +385,14 @@ remaining pattern schemas by identity, and remove the name fallback.
    trailing standard conversion rank, with the non-template preferred when the
    sequences are otherwise indistinguishable. Object-pointer targets use the
    same ranking, including templates that deduce a cv-qualified pointee.
+   A conversion function template whose result is an alias to an array
+   reference with a dependent bound now publishes the alias target as a
+   canonical unknown-bound array pattern instead of failing the alias target
+   import. Canonical template deduction binds that bound from the concrete
+   extent of the argument array, so the dependent bound reaches the
+   conversion result as a published non-type argument rather than a rigid
+   alias pattern. `test_conversion_template_dependent_array_bound_ret0.cpp`
+   pins the deduced bound across several element types and extents.
    Array-to-pointer decay for multi-dimensional pointer-element arrays now
    promotes the decayed type to its ordered spine, placing the outer pointer
    before the row array and the element pointer inside it, so

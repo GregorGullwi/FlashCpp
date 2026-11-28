@@ -1957,8 +1957,23 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						}
 					}
 				}
+				// A dependent array bound has no concrete extent in the alias's
+				// own parameter environment. Publish the target pattern with an
+				// unknown bound instead of rejecting the whole alias, so a
+				// deduction pattern can bind the bound from its argument.
+				TypeSpecifierNode target_pattern = target;
+				if (target_pattern.has_ordered_declarator()) {
+					std::vector<DeclaratorComponent> components(target_pattern.declarator_components().begin(),
+						target_pattern.declarator_components().end());
+					for (DeclaratorComponent& component : components) {
+						if (component.kind == DeclaratorComponentKind::Array && component.payload == 0) {
+							component.kind = DeclaratorComponentKind::UnknownBoundArray;
+						}
+					}
+					target_pattern.set_ordered_declarator(std::move(components));
+				}
 				const CanonicalTypeImport imported_target =
-					importCanonicalType(front_end.canonicalTypes(), target);
+					importCanonicalType(front_end.canonicalTypes(), target_pattern);
 				if (imported_target.status == CanonicalTypeImportStatus::Supported) {
 					TemplateVector<CanonicalTemplateArgKind, 4> parameter_kinds;
 					for (const TemplateParameterNode& parameter : published_alias.template_parameters()) {

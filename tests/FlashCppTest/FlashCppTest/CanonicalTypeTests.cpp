@@ -7769,6 +7769,31 @@ TEST_CASE("Canonical function-template ordering binds typed integral values") {
 	CHECK(deduceCanonicalFunctionTemplateType(table, first, parameter, environment).status == CanonicalTemplateDeductionStatus::Mismatch);
 }
 
+TEST_CASE("Canonical function-template deduction binds a dependent array bound") {
+	FrontendContext frontend;
+	CanonicalTypeTable& table = frontend.canonicalTypes();
+	const TypeId integer = table.builtin(CanonicalBuiltinKind::Int);
+	const TemplateDeclId environment{963};
+	const TypeId parameter = table.templateParameter(environment, 0);
+	const auto function = [&table](TypeId result) {
+		const TypeId wrapped = table.pointer(result);
+		return table.function(wrapped, {}, false, CVQualifier::None, ReferenceQualifier::None, false,
+			CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	};
+	const CanonicalFunctionTemplateTypePattern pattern{
+		function(table.arrayOfUnknownBound(parameter)), std::nullopt, std::nullopt,
+		{{ExprId{964}, CanonicalTemplateNonTypeArgumentKind::TemplateParameter, environment, 0, integer}}};
+	const CanonicalFunctionTemplateTypePattern argument{
+		function(table.array(integer, 4)), std::nullopt, std::nullopt, {}};
+	const auto deduction = deduceCanonicalFunctionTemplateType(table, pattern, argument, environment);
+	REQUIRE(deduction.status == CanonicalTemplateDeductionStatus::Match);
+	REQUIRE(deduction.non_type_bindings.size() == 1);
+	CHECK(deduction.non_type_bindings.front().argument.is_typed_value);
+	CHECK(deduction.non_type_bindings.front().argument.typed_value == table.integralValue(integer, 4));
+	CHECK(deduceCanonicalFunctionTemplateType(table, argument, argument, environment).status == CanonicalTemplateDeductionStatus::Match);
+	CHECK(deduceCanonicalFunctionTemplateType(table, argument, pattern, environment).status == CanonicalTemplateDeductionStatus::Mismatch);
+}
+
 TEST_CASE("Canonical function-template ordering binds direct integral NTTPs by identity") {
 	FrontendContext frontend;
 	CanonicalTypeTable& table = frontend.canonicalTypes();
