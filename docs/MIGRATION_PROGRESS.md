@@ -834,8 +834,13 @@ remaining pattern schemas by identity, and remove the name fallback.
    parameter's identity. The direct and aliased function-parameter regressions
    verify exact selection, differing nested signatures, and zero name fallback.
    The parser handles nested direct parameter clauses on a worklist.
-   Supported alias-template arguments expand by alias
-   declaration identity before registration. The structural
+   A trailing signature parameter pack now consumes the concrete parameter tail
+   in the matcher and publishes an environment with a declaration-identity pack
+   marker, so `S<R(Args...)>` and `S<R (*)(Args...)>` select their partials, an
+   empty pack matches, and a fixed-parameter pattern remains more specialized;
+   `test_canonical_partial_signature_pack_environment_ret0.cpp` pins those
+   outcomes and zero name fallback. Supported alias-template arguments expand by
+   alias declaration identity before registration. The structural
    matcher and canonical importer consume the same expanded pattern, so a
    pointer alias such as `S<Ptr<T>>` matches `S<int*>` and reads its
    environment-keyed record.

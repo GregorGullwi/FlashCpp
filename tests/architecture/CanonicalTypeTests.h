@@ -4273,6 +4273,76 @@ inline void checkDoublePointerPartialPatternIdentityIndependence() {
 		reverse_patterns.integer);
 }
 
+// [temp.variadic]/1: a trailing signature pack is one alpha-normalized
+// placeholder in the canonical Function node; a declaration-identity marker
+// separates it from a fixed single-parameter pattern. The structural shape must
+// stay independent of interning order and split from other arities and owners.
+inline void checkSignaturePackPartialPatternIdentityIndependence() {
+	const TemplateDeclId primary{8761};
+	const TemplateDeclId other_primary{8762};
+	const StringHandle first_identity = StringTable::getOrInternStringHandle("signature-pack-pattern-first");
+	const StringHandle second_identity = StringTable::getOrInternStringHandle("signature-pack-pattern-second");
+	struct Patterns {
+		TypeId pack;
+		TypeId empty;
+		TypeId fixed;
+		TypeId other_primary_pack;
+	};
+	const auto build = [&](CanonicalTypeTable& table, bool reverse) {
+		if (reverse) {
+			table.builtin(CanonicalBuiltinKind::Char);
+		}
+		const TypeId parameter = table.templateParameter(primary, 0);
+		const TypeId other_parameter = table.templateParameter(other_primary, 0);
+		const auto make_function = [&table](TypeId return_type, std::span<const TypeId> parameters) {
+			return table.function(return_type, parameters, false, CVQualifier::None, ReferenceQualifier::None, false,
+				CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+		};
+		const TypeId one_parameter[] = {parameter};
+		const std::span<const TypeId> empty_parameters;
+		const auto make_pattern = [&table](TemplateDeclId decl, TypeId callable) {
+			const CanonicalTemplateArgument arguments[] = {CanonicalTemplateArgument::makeType(callable)};
+			return table.templateSpecialization(decl, arguments);
+		};
+		return Patterns{
+			make_pattern(primary, make_function(parameter, one_parameter)),
+			make_pattern(primary, make_function(parameter, empty_parameters)),
+			make_pattern(primary, make_function(parameter, std::array<TypeId, 2>{parameter, parameter})),
+			make_pattern(other_primary, make_function(other_parameter, one_parameter)),
+		};
+	};
+	CanonicalTypeTable forward;
+	const Patterns forward_patterns = build(forward, false);
+	require(forward_patterns.pack != forward_patterns.empty);
+	require(forward_patterns.pack != forward_patterns.fixed);
+	require(forward_patterns.pack != forward_patterns.other_primary_pack);
+	CanonicalTypeTable reverse;
+	const Patterns reverse_patterns = build(reverse, true);
+	require(sameStructure(forward, forward_patterns.pack, reverse, reverse_patterns.pack));
+	require(!sameStructure(forward, forward_patterns.pack, reverse, reverse_patterns.empty));
+	require(!sameStructure(forward, forward_patterns.pack, reverse, reverse_patterns.fixed));
+	require(!sameStructure(forward, forward_patterns.pack, reverse, reverse_patterns.other_primary_pack));
+	const auto check_environment_partition = [&](TemplateDeclTable& decls, TemplateDeclId pattern_primary,
+		TypeId pattern, TypeId other_pattern, TypeId third_pattern) {
+		const TemplateDeclId first = decls.publishClassPartialEnvironment(pattern_primary, pattern, first_identity);
+		const TemplateDeclId second = decls.publishClassPartialEnvironment(pattern_primary, pattern, second_identity);
+		require(first != second);
+		require(decls.publishClassPartialEnvironment(pattern_primary, pattern, first_identity) == first);
+		require(decls.publishClassPartialEnvironment(pattern_primary, other_pattern, first_identity) != first);
+		require(decls.publishClassPartialEnvironment(pattern_primary, third_pattern, first_identity) != first);
+	};
+	const OwnerId owner{8763};
+	const StringHandle name = StringTable::getOrInternStringHandle("SignaturePackPartialIdentity");
+	TemplateDeclTable forward_decls;
+	const TemplateDeclId forward_primary = forward_decls.publishPrimaryClassTemplate(owner, name);
+	check_environment_partition(forward_decls, forward_primary, forward_patterns.pack, forward_patterns.empty,
+		forward_patterns.fixed);
+	TemplateDeclTable reverse_decls;
+	const TemplateDeclId reverse_primary = reverse_decls.publishPrimaryClassTemplate(owner, name);
+	check_environment_partition(reverse_decls, reverse_primary, reverse_patterns.pack, reverse_patterns.fixed,
+		reverse_patterns.empty);
+}
+
 // The shape is a by-value query result; a future field must not quietly re-add
 // padding to it.
 static_assert(sizeof(CanonicalPointerShape) == 10, "pointer shape stays a packed by-value result");
@@ -4627,6 +4697,7 @@ inline int run() {
 	checkFunctionSignaturePartialPatternIdentityIndependence();
 	checkFunctionPointerPartialPatternIdentityIndependence();
 	checkDoublePointerPartialPatternIdentityIndependence();
+	checkSignaturePackPartialPatternIdentityIndependence();
 	checkSpecializationFieldSchemas();
 	checkNestedFieldSchemas();
 	checkRecordMemberProperties();
