@@ -8408,10 +8408,19 @@ inline CanonicalTemplateTypeDeduction deduceCanonicalFunctionTemplateType(
 			}
 			continue;
 		}
+		// A pattern whose array bound is not concrete can deduce that bound
+		// from a known-bound argument. The bound is carried by a non-type
+		// template parameter of the pattern declaration, so the deduced extent
+		// is published as a typed non-type binding rather than compared as a
+		// literal extent. Other flag differences stay a mismatch.
+		const bool deducible_array_bound = pattern.kind == CanonicalTypeKind::Array &&
+			!hasCanonicalTypeNodeFlag(pattern.flags, CanonicalTypeNodeFlags::KnownArrayBound) &&
+			argument.kind == CanonicalTypeKind::Array &&
+			hasCanonicalTypeNodeFlag(argument.flags, CanonicalTypeNodeFlags::KnownArrayBound);
 		if (pattern.kind != argument.kind ||
 			pattern.builtin != argument.builtin ||
 			pattern.qualifiers != argument.qualifiers ||
-			pattern.flags != argument.flags) {
+			(!deducible_array_bound && pattern.flags != argument.flags)) {
 			result.status = CanonicalTemplateDeductionStatus::Mismatch;
 			return result;
 		}
@@ -8426,7 +8435,27 @@ inline CanonicalTemplateTypeDeduction deduceCanonicalFunctionTemplateType(
 				pattern.child, argument.child, pair.pack_element_index});
 			break;
 		case CanonicalTypeKind::Array:
-			if (pattern.array_extent != argument.array_extent) {
+			if (deducible_array_bound) {
+				const auto unbound_pattern = [&non_type_bindings](const CanonicalTemplateNonTypeArgumentPattern& candidate) {
+					return candidate.kind == CanonicalTemplateNonTypeArgumentKind::TemplateParameter &&
+						std::ranges::find_if(non_type_bindings,
+							[&candidate](const CanonicalTemplateNonTypeBinding& binding) {
+								return binding.parameter_index == candidate.parameter_index;
+							}) == non_type_bindings.end();
+				};
+				const auto bound_pattern = std::ranges::find_if(pattern_function.non_type_arguments, unbound_pattern);
+				if (bound_pattern == pattern_function.non_type_arguments.end() ||
+					!bound_pattern->parameter_type ||
+					std::ranges::count_if(pattern_function.non_type_arguments, unbound_pattern) != 1) {
+					result.status = CanonicalTemplateDeductionStatus::Unsupported;
+					return result;
+				}
+				const TypeId bound_value = table.integralValue(bound_pattern->parameter_type, argument.array_extent);
+				if (!bind_non_type(bound_pattern->parameter_index, CanonicalTemplateNonTypeArgumentIdentity::makeValue(bound_value))) {
+					result.status = CanonicalTemplateDeductionStatus::Mismatch;
+					return result;
+				}
+			} else if (pattern.array_extent != argument.array_extent) {
 				result.status = CanonicalTemplateDeductionStatus::Mismatch;
 				return result;
 			}

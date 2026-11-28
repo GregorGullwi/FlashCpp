@@ -600,8 +600,6 @@ before they can be ranked.
   record during class instantiation before they contribute conversion candidates.
   Non-deferred aliases that name a concrete record now resolve; deferred bases
   without a concrete record must stay excluded.
-- Support conversion-template results whose dependent array bounds or packs are
-  not concrete.
 - Seed built-in subscript candidates from conversion templates whose return
   pointer or array-reference shape still depends on the template parameters.
 
