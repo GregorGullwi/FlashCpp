@@ -144,7 +144,7 @@ TypeInfo& Parser::ensureTemplateParameterTypeRegistration(TemplateParameterNode&
 			0);
 	}
 
-	type_info->placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
+	type_info->placeholder_kind_ = tparam.is_variadic() ? DependentPlaceholderKind::TemplateParameterPack : DependentPlaceholderKind::DependentArgs;
 	tparam.set_registered_type_index(type_info->type_index_);
 	return *type_info;
 }
