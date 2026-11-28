@@ -524,8 +524,14 @@ inline std::optional<TypeId> tryImportCanonicalPartialTypePattern(CanonicalTypeT
 					function_parameters.push_back(typeSpecifierFromFunctionType(signature.return_type()));
 				} else {
 					const FunctionType& parameter = signature.parameter_types()[index - 1];
-					if (parameter.is_pack_expansion) return std::nullopt;
-					function_parameters.push_back(typeSpecifierFromFunctionType(parameter));
+					TypeSpecifierNode parameter_syntax = typeSpecifierFromFunctionType(parameter);
+					if (parameter.is_pack_expansion) {
+						// [temp.variadic]/1: the pack is a single placeholder in the
+						// pattern shape; the environment key records its identity
+						// through the declaration-identity pack marker.
+						parameter_syntax.set_pack_expansion(false);
+					}
+					function_parameters.push_back(std::move(parameter_syntax));
 				}
 				pending = make_frame(function_parameters.back(), &frame);
 				continue;

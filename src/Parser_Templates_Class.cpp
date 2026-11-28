@@ -69,13 +69,15 @@ std::optional<StringHandle> partialPatternDeclarationIdentity(
 		}
 	}
 	bool has_pack_argument = false;
+	bool has_signature_pack = false;
 	for (const TemplateTypeArg& argument : arguments) {
-		if (argument.is_pack) {
-			has_pack_argument = true;
-			break;
+		has_pack_argument |= argument.is_pack;
+		if (!argument.hasFunctionSignature()) continue;
+		for (const FunctionType& parameter : argument.functionSignature().parameter_types()) {
+			has_signature_pack |= parameter.is_pack_expansion && parameter.template_parameter_name.isValid();
 		}
 	}
-	if (!has_constraint && !has_pack_argument && requires_clause == nullptr) {
+	if (!has_constraint && !has_pack_argument && !has_signature_pack && requires_clause == nullptr) {
 		return StringHandle{};
 	}
 	StringBuilder identity;
@@ -103,6 +105,34 @@ std::optional<StringHandle> partialPatternDeclarationIdentity(
 	identity.append("A").append(static_cast<int64_t>(arguments.size())).append(";");
 	for (const TemplateTypeArg& argument : arguments) {
 		identity.append(argument.is_pack ? "P;" : "S;");
+	}
+	// [temp.variadic]/1: a callable's parameter pack is part of the pattern's
+	// identity even though the canonical Function node holds one placeholder.
+	for (size_t argument_index = 0; argument_index < arguments.size(); ++argument_index) {
+		if (!arguments[argument_index].hasFunctionSignature()) continue;
+		bool emitted = false;
+		for (const FunctionType& parameter : arguments[argument_index].functionSignature().parameter_types()) {
+			if (!parameter.is_pack_expansion || !parameter.template_parameter_name.isValid()) continue;
+			size_t parameter_index = parameters.size();
+			for (size_t candidate = 0; candidate < parameters.size(); ++candidate) {
+				if (parameters[candidate].nameHandle() == parameter.template_parameter_name) {
+					parameter_index = candidate;
+					break;
+				}
+			}
+			if (parameter_index == parameters.size() || !parameters[parameter_index].is_variadic()) {
+				identity.reset();
+				return std::nullopt;
+			}
+			if (!emitted) {
+				identity.append("F").append(static_cast<int64_t>(argument_index)).append(":");
+				emitted = true;
+			}
+			identity.append(static_cast<int64_t>(parameter_index)).append(",");
+		}
+		if (emitted) {
+			identity.append(";");
+		}
 	}
 	if (requires_clause != nullptr) {
 		if (!requires_clause->is<RequiresClauseNode>()) {

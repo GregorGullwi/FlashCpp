@@ -1,6 +1,7 @@
 #pragma once
 #include "CanonicalTypeAdapter.h"
 #include "TemplateEnvironment.h"
+#include "CanonicalTypeAdapter.h"
 #include "TemplateRegistry_Types.h"
 #include "TemplatePackExpansion.h"
 
@@ -507,22 +508,39 @@ struct TemplatePattern {
 			: calling_convention;
 	}
 
-	// A parameter pack in a bare function signature needs its own expansion
-	// binding; the strict signature comparison below cannot consume it yet.
-	static bool signatureHasPackParameter(const FunctionSignature& signature) {
-		for (const FunctionType& parameter : signature.parameter_types()) {
-			if (parameter.is_pack_expansion) {
-				return true;
-			}
+	// [temp.deduct.call]/1: a function parameter pack matches the remaining
+	// concrete parameter list. The adapter projects the parameter's complete
+	// declarator shape so a deduced pack element keeps its pointer and array
+	// structure.
+	static TemplateTypeArg deducedArgFromFunctionParameter(const FunctionType& parameter) {
+		return deducedTemplateArgFromFunctionType(parameter);
+	}
+
+	// Only a trailing parameter pack can consume a variable concrete tail.
+	static const FunctionType* trailingSignaturePack(const FunctionSignature& signature) {
+		const auto& parameters = signature.parameter_types();
+		if (parameters.empty() || !parameters.back().is_pack_expansion) return nullptr;
+		for (size_t index = 0; index + 1 < parameters.size(); ++index) {
+			if (parameters[index].is_pack_expansion) return nullptr;
 		}
-		return false;
+		return &parameters.back();
+	}
+
+	static StringHandle signaturePackName(const FunctionType& pack) {
+		if (pack.template_parameter_name.isValid()) return pack.template_parameter_name;
+		const TypeInfo* name_info = tryGetTypeInfo(pack.type_index);
+		return name_info != nullptr ? name_info->name() : StringHandle{};
 	}
 
 	static bool matchSignatureComponents(const FunctionSignature& pattern_sig, const FunctionSignature& concrete_sig,
 		const std::unordered_set<StringHandle, StringHandleHash>& template_param_names,
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions,
 		std::vector<SignaturePair>& pending) {
-		if (pattern_sig.parameter_type_indices.size() != concrete_sig.parameter_type_indices.size() ||
+		const FunctionType* pack = trailingSignaturePack(pattern_sig);
+		const size_t pattern_parameter_count = pattern_sig.parameter_type_indices.size();
+		const size_t concrete_parameter_count = concrete_sig.parameter_type_indices.size();
+		const bool pack_matches = pack != nullptr && concrete_parameter_count + 1 >= pattern_parameter_count;
+		if ((pack == nullptr ? pattern_parameter_count != concrete_parameter_count : !pack_matches) ||
 			pattern_sig.linkage != concrete_sig.linkage ||
 			normalizeCallingConventionForTemplatePatternMatch(pattern_sig.calling_convention) !=
 				normalizeCallingConventionForTemplatePatternMatch(concrete_sig.calling_convention) ||
@@ -533,31 +551,42 @@ struct TemplatePattern {
 			pattern_sig.is_noexcept != concrete_sig.is_noexcept) {
 			return false;
 		}
-		if (pattern_sig.hasStructuredTypes() && concrete_sig.hasStructuredTypes() && !signatureHasPackParameter(pattern_sig)) {
-			if (!matchStructuredSignatureType(pattern_sig.return_type(), concrete_sig.return_type(), false, template_param_names, param_substitutions, pending)) {
+		const size_t fixed_count = pack != nullptr ? pattern_parameter_count - 1 : pattern_parameter_count;
+		if (pattern_sig.hasStructuredTypes() && concrete_sig.hasStructuredTypes()) {
+			if (!matchStructuredSignatureType(pattern_sig.return_type(), concrete_sig.return_type(), false, template_param_names,
+				param_substitutions, pending)) {
 				return false;
 			}
-			for (size_t index = 0; index < pattern_sig.parameter_types().size(); ++index) {
+			for (size_t index = 0; index < fixed_count; ++index) {
 				if (!matchStructuredSignatureType(pattern_sig.parameter_types()[index], concrete_sig.parameter_types()[index], true,
 					template_param_names, param_substitutions, pending)) {
 					return false;
 				}
 			}
-			return true;
-		}
-		if (pattern_sig.return_pointer_depth != concrete_sig.return_pointer_depth ||
-			pattern_sig.return_reference_qualifier != concrete_sig.return_reference_qualifier) {
-			return false;
-		}
-		if (!matchFunctionSignatureType(
-				pattern_sig.return_type_index, concrete_sig.return_type_index,
-				template_param_names, param_substitutions)) {
-			return false;
-		}
-		for (size_t i = 0; i < pattern_sig.parameter_type_indices.size(); ++i) {
+		} else {
+			if (pattern_sig.return_pointer_depth != concrete_sig.return_pointer_depth ||
+				pattern_sig.return_reference_qualifier != concrete_sig.return_reference_qualifier) {
+				return false;
+			}
 			if (!matchFunctionSignatureType(
-					pattern_sig.parameter_type_indices[i], concrete_sig.parameter_type_indices[i],
+					pattern_sig.return_type_index, concrete_sig.return_type_index,
 					template_param_names, param_substitutions)) {
+				return false;
+			}
+			for (size_t index = 0; index < fixed_count; ++index) {
+				if (!matchFunctionSignatureType(
+						pattern_sig.parameter_type_indices[index], concrete_sig.parameter_type_indices[index],
+						template_param_names, param_substitutions)) {
+					return false;
+				}
+			}
+		}
+		if (pack != nullptr && fixed_count < concrete_parameter_count) {
+			const StringHandle pack_name = signaturePackName(*pack);
+			if (!pack_name.isValid() || !template_param_names.count(pack_name)) return false;
+			TemplateTypeArg representative = deducedArgFromFunctionParameter(concrete_sig.parameter_types()[fixed_count]);
+			representative.is_pack = true;
+			if (!recordDeduction(pack_name, representative, param_substitutions)) {
 				return false;
 			}
 		}
@@ -700,17 +729,23 @@ struct TemplatePattern {
 		}
 
 		const bool bare_function_argument = pattern_arg.hasFunctionSignature() && pattern_arg.category() != TypeCategory::FunctionPointer &&
-			pattern_arg.category() != TypeCategory::MemberFunctionPointer && pattern_arg.category() != TypeCategory::MemberObjectPointer &&
-			!signatureHasPackParameter(pattern_arg.functionSignature());
+			pattern_arg.category() != TypeCategory::MemberFunctionPointer && pattern_arg.category() != TypeCategory::MemberObjectPointer;
 		const bool structured_callable_argument = pattern_arg.hasFunctionSignature() && pattern_arg.functionSignature().hasStructuredTypes() &&
-			!signatureHasPackParameter(pattern_arg.functionSignature()) && pattern_arg.category() == concrete_arg.category();
+			pattern_arg.category() == concrete_arg.category();
 		if ((bare_function_argument || pattern_arg.category() == TypeCategory::FunctionPointer || pattern_arg.category() == TypeCategory::MemberFunctionPointer) &&
 			!matchFunctionSignature(pattern_arg, concrete_arg, template_param_names, param_substitutions)) {
 			FLASH_LOG(Templates, Trace, "  FAILED: function signature mismatch");
 			return false;
 		}
 		// C++20 [temp.class.spec.match]/2 and [temp.deduct.type]/3 deduce through
-		// the callable's return type, parameter types, and any member-pointer owner.
+		// the callable's return type, parameter types, and any member-pointer owner,
+		// not from the whole argument. The whole-argument path below would re-bind a
+		// return/parameter name to the callable itself, which disagrees with the
+		// signature binding as soon as the callable carries its own declarator
+		// shape, such as `T (**)(T)`. The outer category check keeps `T (*)(T)` from
+		// absorbing a bare `int(int)` argument, whose category follows the return
+		// type. A trailing signature pack ([temp.deduct.call]/1) is bound from the
+		// remaining concrete parameters and consumes the whole tail.
 		if (bare_function_argument || structured_callable_argument) {
 			return true;
 		}
@@ -983,13 +1018,34 @@ struct TemplatePattern {
 			}
 			return true;
 		};
+		// A trailing callable signature pack is a complete group, not the
+		// representative element recorded during signature comparison.
+		const auto bind_signature_packs = [&](const TemplateTypeArg& pattern, const TemplateTypeArg& concrete) {
+			if (!pattern.hasFunctionSignature() || !concrete.hasFunctionSignature()) return true;
+			const FunctionSignature& pattern_sig = pattern.functionSignature();
+			const FunctionType* pack = trailingSignaturePack(pattern_sig);
+			if (pack == nullptr) return true;
+			const StringHandle pack_name = signaturePackName(*pack);
+			if (!pack_name.isValid() || !names.count(pack_name)) return false;
+			const size_t pack_index = parameter_index(pack_name);
+			if (pack_index == template_params.size() || !template_params[pack_index].is_variadic()) return false;
+			const size_t fixed_count = pattern_sig.parameter_types().size() - 1;
+			const auto& concrete_parameters = concrete.functionSignature().parameter_types();
+			if (concrete_parameters.size() < fixed_count) return false;
+			std::vector<TemplateTypeArg> arguments;
+			for (size_t index = fixed_count; index < concrete_parameters.size(); ++index) {
+				arguments.push_back(deducedArgFromFunctionParameter(concrete_parameters[index]));
+			}
+			return bind_pack(pack_index, arguments);
+		};
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> scalar_deductions;
 		size_t concrete_index = 0;
 		for (size_t pattern_index = 0; pattern_index < pattern_args.size(); ++pattern_index) {
 			const TemplateTypeArg& pattern = pattern_args[pattern_index];
 			if (!pattern.is_pack) {
 				if (concrete_index == concrete_args.size() || !matchArgument(pattern, concrete_args[concrete_index], names, scalar_deductions, template_params) ||
-					!bind_inner_packs(pattern, concrete_args[concrete_index])) return false;
+					!bind_inner_packs(pattern, concrete_args[concrete_index]) ||
+					!bind_signature_packs(pattern, concrete_args[concrete_index])) return false;
 				++concrete_index;
 				continue;
 			}
@@ -1018,7 +1074,8 @@ struct TemplatePattern {
 					if (binding.is_pack) element_deductions.erase(binding.name);
 				}
 				if (!matchArgument(pattern, concrete_args[concrete_index], names, element_deductions, template_params) ||
-					!bind_inner_packs(pattern, concrete_args[concrete_index])) return false;
+					!bind_inner_packs(pattern, concrete_args[concrete_index]) ||
+					!bind_signature_packs(pattern, concrete_args[concrete_index])) return false;
 				for (size_t index = 0; index < current_packs.size(); ++index) {
 					const auto element = element_deductions.find(template_params[current_packs[index]].nameHandle());
 					if (element == element_deductions.end()) return false;
@@ -1140,6 +1197,15 @@ struct TemplatePattern {
 			}
 			if ((static_cast<uint8_t>(arg.cv_qualifier) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0) {
 				score += 1; // volatile T is more specific than T
+			}
+			// [temp.func.order]/1: a fixed function parameter is more specialized
+			// than a parameter pack, which contributes no fixed constraint.
+			if (arg.hasFunctionSignature()) {
+				for (const FunctionType& parameter : arg.functionSignature().parameter_types()) {
+					if (!parameter.is_pack_expansion) {
+						++score;
+					}
+				}
 			}
 		}
 

@@ -1199,6 +1199,15 @@ inline CanonicalTypeImport importCanonicalMemberPointer(CanonicalTypeTable& tabl
 // so `T (**)(T)` keeps both levels without applying either twice. A Function or
 // member-pointer component owns another signature or an owner identity and
 // stays on the opaque path.
+// Build a deduced template argument for one concrete callable parameter. The
+// flat declarator reads stay in this adapter so template pattern matching
+// consumes the same shape the canonical importer uses.
+inline TemplateTypeArg deducedTemplateArgFromFunctionType(const FunctionType& parameter) {
+	TypeSpecifierNode spec = typeSpecifierFromFunctionType(parameter);
+	spec.set_pack_expansion(false);
+	return TemplateTypeArg(spec);
+}
+
 inline bool hasPointerOnlyOrderedDeclarator(const TypeSpecifierNode& syntax) {
 	if (!syntax.has_ordered_declarator()) {
 		return false;
