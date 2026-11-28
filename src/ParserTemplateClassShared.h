@@ -520,13 +520,8 @@ inline std::optional<TypeId> tryImportCanonicalPartialTypePattern(CanonicalTypeT
 			if (frame.next_argument < count) {
 				const size_t index = frame.next_argument++;
 				if (index == 0) {
-					if (callable) {
-						function_parameters.push_back(typeSpecifierFromFunctionType(signature.return_type()));
-					} else {
-						TypeSpecifierNode return_syntax = syntax;
-						return_syntax.clear_function_signature();
-						function_parameters.push_back(std::move(return_syntax));
-					}
+					// A function-type alias names the whole function. Its return type lives in the signature.
+					function_parameters.push_back(typeSpecifierFromFunctionType(signature.return_type()));
 				} else {
 					const FunctionType& parameter = signature.parameter_types()[index - 1];
 					if (parameter.is_pack_expansion) return std::nullopt;

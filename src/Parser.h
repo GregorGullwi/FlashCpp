@@ -1933,6 +1933,10 @@ private:
 	// whose return type is itself a function pointer.
 	ParseResult parse_function_pointer_parameter_types(std::vector<FunctionType>& out_param_types, bool& out_is_variadic);
 	ParseResult parse_nested_function_pointer_type(TypeSpecifierNode& type_spec);
+	bool startsBareFunctionParameterType(const TypeSpecifierNode& return_type);
+	ParseResult parseAdjustedFunctionParameterType(TypeSpecifierNode& type_spec, CallingConvention calling_convention);
+	ParseResult finishAdjustedFunctionParameterType(FunctionType& type, std::vector<FunctionType>& parameters, bool is_variadic,
+		CallingConvention calling_convention);
 	bool parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::string_view log_context);
 	void bindLocalTypeAlias(
 		const Token& alias_token,

@@ -135,10 +135,6 @@ Remaining unsupported callable shapes are signature parameter packs, dependent
 noexcept expressions, reference returns, member-pointer callables, and ordered
 declarators with a non-pointer component (nested function, array, reference, or
 member-pointer spine).
-A directly written function parameter declarator such as `T (**)(T(long))`
-also fails to parse in a partial pattern. A function-type alias in that
-parameter position can match an adjusted function pointer and still uses
-name fallback for the pattern record.
 The fallback also remains for non-type-parameter argument shapes and for
 patterns whose concept or requires-clause argument identity cannot be published.
 

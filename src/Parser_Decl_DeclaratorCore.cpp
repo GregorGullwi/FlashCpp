@@ -797,6 +797,14 @@ ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 		if (peek() != "("_tok) {
 			return std::nullopt;
 		}
+		if (parsing_parameter_declaration_type_id_ && startsBareFunctionParameterType(type_spec)) {
+			ParseResult result = parseAdjustedFunctionParameterType(type_spec, last_calling_convention_);
+			if (result.is_error()) {
+				return std::move(result);
+			}
+			const Token unnamed(Token::Type::Identifier, ""sv, type_spec.token().line(), type_spec.token().column(), type_spec.token().file_index());
+			return ParseResult::success(emplace_node<DeclarationNode>(emplace_node<TypeSpecifierNode>(type_spec), unnamed));
+		}
 		// Reference-to-array: T (&name)[N][M]...
 		Token ref_identifier;
 		bool has_name = false;
@@ -2545,52 +2553,149 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 // This shared helper covers both standalone function pointers and function
 // declarations whose return type is itself a function pointer.
 ParseResult Parser::parse_function_pointer_parameter_types(std::vector<FunctionType>& out_param_types, bool& out_is_variadic) {
+	struct FunctionParameterClause {
+		FunctionType type;
+		std::vector<FunctionType> parameters;
+	};
+	std::vector<FunctionParameterClause> pending;
 	out_is_variadic = false;
-	if (peek() == ")"_tok) {
-		return ParseResult::success();
-	}
 
 	while (true) {
-		// Accept standalone or terminal variadic ellipses, including MSVC header aliases like bool(__stdcall*)(...) noexcept.
-		if (peek() == "..."_tok) {
+		std::vector<FunctionType>& parameters = pending.empty() ? out_param_types : pending.back().parameters;
+		if (parameters.empty() && peek() == "void"_tok && peek(1) == ")"_tok) {
 			advance();
-			out_is_variadic = true;
-			break;
 		}
+		const bool is_variadic = consume("..."_tok);
+		if (peek() == ")"_tok || is_variadic) {
+			if (pending.empty()) {
+				out_is_variadic = is_variadic;
+				return ParseResult::success();
+			}
+			ParseResult result = finishAdjustedFunctionParameterType(pending.back().type, parameters, is_variadic, CallingConvention::Default);
+			if (result.is_error()) {
+				return result;
+			}
+			auto& enclosing_parameters = pending.size() == 1 ? out_param_types : pending[pending.size() - 2].parameters;
+			enclosing_parameters.push_back(std::move(pending.back().type));
+			pending.pop_back();
+		} else {
+			auto param_type_result = parse_type_specifier();
+			if (param_type_result.is_error()) {
+				return param_type_result;
+			}
+			TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
+			if (peek() != "("_tok) {
+				consume_pointer_ref_modifiers(param_type);
+			}
+			if (startsBareFunctionParameterType(param_type)) {
+				advance();
+				pending.push_back({makeFunctionType(param_type), {}});
+				continue;
+			}
+			ParseResult nested_function_result = parse_nested_function_pointer_type(param_type);
+			if (nested_function_result.is_error()) {
+				return nested_function_result;
+			}
+			skip_noop_gnu_qualifiers();
+			consume_pointer_ref_modifiers(param_type);
+			if (consume("..."_tok)) {
+				param_type.set_pack_expansion(true);
+				consume("..."_tok);
+			}
 
-		auto param_type_result = parse_type_specifier();
-		if (param_type_result.is_error()) {
-			return param_type_result;
-		}
-
-		TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
-		ParseResult nested_function_result =
-			parse_nested_function_pointer_type(param_type);
-		if (nested_function_result.is_error()) {
-			return nested_function_result;
-		}
-		skip_noop_gnu_qualifiers();
-		consume_pointer_ref_modifiers(param_type);
-		if (peek() == "..."_tok) {
-			advance();
-			param_type.set_pack_expansion(true);
-			if (peek() == "..."_tok) {
+			if (peek().is_identifier()) {
 				advance();
 			}
+			parameters.push_back(makeFunctionType(param_type));
 		}
 
-		if (peek().is_identifier()) {
-			advance();
+		if (consume(","_tok)) {
+			if (peek() == ")"_tok) {
+				return ParseResult::error("Expected parameter after ','", current_token_);
+			}
+			continue;
 		}
-		out_param_types.push_back(makeFunctionType(param_type));
-
-		if (peek() == ","_tok) {
-			advance();
-		} else {
-			break;
+		if (pending.empty()) {
+			return ParseResult::success();
+		}
+		if (peek() != ")"_tok) {
+			return ParseResult::error("Expected ',' or ')' after function parameter", current_token_);
 		}
 	}
+}
 
+bool Parser::startsBareFunctionParameterType(const TypeSpecifierNode& return_type) {
+	if (peek() != "("_tok) {
+		return false;
+	}
+	// A speculative parameter parse may leave an unresolved qualified name
+	// on a specifier, as in the initializer `int value(Missing::f());`.
+	if (return_type.category() == TypeCategory::UserDefined && !return_type.type_index().is_valid() &&
+		!return_type.has_template_parameter_identity() && !return_type.has_dependent_name_type()) {
+		return false;
+	}
+	// C++20 [dcl.ambig.res]/3 treats a parenthesized type-name in a parameter as a type specifier.
+	const TokenKind first = peek(1);
+	if (first == "decltype"_tok || first == "::"_tok || (first.is_identifier() && (peek(2) == "::"_tok || peek(2) == "<"_tok))) {
+		const SaveHandle start = save_token_position();
+		advance();
+		const NestedNameSpecifierParse name = parseNestedNameSpecifier(std::nullopt, NestedNameSyntaxNodes::Skip);
+		const bool member_pointer = !name.segments.empty() && !name.has_terminal && peek() == "*"_tok;
+		restore_token_position(start);
+		if (member_pointer) {
+			return false;
+		}
+	}
+	if (first.is_identifier()) {
+		const StringHandle name = peek_info(1).handle();
+		const auto kind = currentTemplateParamKind(name);
+		return kind.has_value() ? *kind == TemplateParameterKind::Type : getTypesByNameMap().contains(name);
+	}
+	return first == "..."_tok || first == "typename"_tok || ((first.is_keyword() || first == ")"_tok) && looks_like_function_parameters());
+}
+
+ParseResult Parser::parseAdjustedFunctionParameterType(TypeSpecifierNode& type_spec, CallingConvention calling_convention) {
+	advance(); // consume '(' selected by startsBareFunctionParameterType
+	std::vector<FunctionType> parameters;
+	bool is_variadic = false;
+	ParseResult result = parse_function_pointer_parameter_types(parameters, is_variadic);
+	if (result.is_error()) {
+		return result;
+	}
+	FunctionType parameter = makeFunctionType(type_spec);
+	result = finishAdjustedFunctionParameterType(parameter, parameters, is_variadic, calling_convention);
+	if (result.is_error()) {
+		return result;
+	}
+	type_spec = TypeSpecifierNode(parameter.type_index, TypeQualifier::None, kFunctionPointerSizeBits, type_spec.token(), CVQualifier::None);
+	type_spec.set_function_signature(*parameter.callable_signature);
+	return ParseResult::success();
+}
+
+ParseResult Parser::finishAdjustedFunctionParameterType(FunctionType& type, std::vector<FunctionType>& parameters, bool is_variadic,
+	CallingConvention calling_convention) {
+	if (!consume(")"_tok)) {
+		return ParseResult::error("Expected ')' after function parameter clause", current_token_);
+	}
+	FlashCpp::MemberQualifiers qualifiers;
+	FlashCpp::FunctionSpecifiers specifiers;
+	ParseResult result = parse_function_type_qualifiers(qualifiers, specifiers);
+	if (result.is_error()) {
+		return result;
+	}
+	// C++20 [dcl.fct]/6 restricts cv- and ref-qualified function types.
+	if (qualifiers.cv_qualifier != CVQualifier::None || qualifiers.ref_qualifier != ReferenceQualifier::None) {
+		return ParseResult::error("A function parameter cannot adjust to a pointer to a cv- or ref-qualified function", current_token_);
+	}
+	FunctionSignature signature;
+	signature.setReturnType(std::exchange(type, FunctionType{}));
+	signature.setParameterTypes(std::move(parameters));
+	signature.calling_convention = calling_convention;
+	signature.is_variadic = is_variadic;
+	apply_parsed_function_type_qualifiers(signature, qualifiers, specifiers);
+	// C++20 [dcl.fct]/5 applies parameter adjustment before the enclosing signature is formed.
+	type.type_index = nativeTypeIndex(TypeCategory::FunctionPointer);
+	type.callable_signature = allocatePersistentFunctionSignature(std::move(signature));
 	return ParseResult::success();
 }
 
@@ -2598,6 +2703,9 @@ ParseResult Parser::parse_nested_function_pointer_type(
 	TypeSpecifierNode& type_spec) {
 	if (peek() != "("_tok) {
 		return ParseResult::success();
+	}
+	if (startsBareFunctionParameterType(type_spec)) {
+		return parseAdjustedFunctionParameterType(type_spec, CallingConvention::Default);
 	}
 	// [dcl.decl]: a nested declarator is a parenthesized ptr-declarator, not
 	// only the `(*` spelling. parse_declarator owns the group.
