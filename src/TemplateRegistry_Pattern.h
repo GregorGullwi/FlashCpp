@@ -1,4 +1,5 @@
 #pragma once
+#include "CanonicalTypeAdapter.h"
 #include "TemplateEnvironment.h"
 #include "TemplateRegistry_Types.h"
 #include "TemplatePackExpansion.h"
@@ -374,11 +375,7 @@ struct TemplatePattern {
 		return true;
 	}
 
-	static bool matchFunctionSignatureType(
-		TypeIndex pattern_type,
-		TypeIndex concrete_type,
-		const std::unordered_set<StringHandle, StringHandleHash>& template_param_names,
-		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions) {
+	static StringHandle findSignatureParameter(TypeIndex pattern_type, const std::unordered_set<StringHandle, StringHandleHash>& template_param_names) {
 		bool has_valid_type_index = pattern_type.is_valid();
 		bool is_template_param_candidate = (pattern_type.category() == TypeCategory::UserDefined) ||
 										   (pattern_type.category() == TypeCategory::Invalid && has_valid_type_index &&
@@ -386,19 +383,98 @@ struct TemplatePattern {
 		if (is_template_param_candidate && has_valid_type_index) {
 			StringHandle param_name = getTypeInfo(pattern_type).name();
 			if (param_name.isValid() && template_param_names.count(param_name)) {
-				TemplateTypeArg deduced;
-				deduced.type_index = concrete_type;
-				return recordDeduction(param_name, deduced, param_substitutions);
+				return param_name;
 			}
 		}
+		return {};
+	}
 
-		if (pattern_type.category() != concrete_type.category()) {
+	static bool matchFunctionSignatureType(TypeIndex pattern_type, TypeIndex concrete_type,
+		const std::unordered_set<StringHandle, StringHandleHash>& template_param_names,
+		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions) {
+		if (const StringHandle parameter = findSignatureParameter(pattern_type, template_param_names); parameter.isValid()) {
+			TemplateTypeArg deduced;
+			deduced.type_index = concrete_type;
+			return recordDeduction(parameter, deduced, param_substitutions);
+		}
+		return FlashCpp::equalTypeIndexIdentity(pattern_type, concrete_type);
+	}
+
+	using SignaturePair = std::pair<const FunctionSignature*, const FunctionSignature*>;
+
+	static std::vector<DeclaratorComponent> signatureTypeShape(TypeSpecifierNode& type, bool function_parameter) {
+		std::vector<DeclaratorComponent> shape;
+		appendDeclaratorShapeForSubstitution(type, shape);
+		if (type.is_function_pointer()) {
+			const auto outer_pointer = std::ranges::find(shape, DeclaratorComponentKind::Pointer, &DeclaratorComponent::kind);
+			if (outer_pointer != shape.end()) {
+				outer_pointer->cv_qualifier |= type.cv_qualifier();
+				type.set_cv_qualifier(CVQualifier::None);
+			} else if (!type.has_ordered_declarator()) {
+				shape.push_back(DeclaratorComponent::pointer(type.cv_qualifier()));
+				type.set_cv_qualifier(CVQualifier::None);
+			}
+		}
+		if (function_parameter) {
+			// C++20 [dcl.fct]/5 adjusts function and array parameters to pointers and removes top-level parameter cv.
+			if (shape.empty() && type.has_function_signature() && !type.has_member_class()) {
+				shape.push_back(DeclaratorComponent::pointer(CVQualifier::None));
+			} else if (shape.empty()) {
+				type.set_cv_qualifier(CVQualifier::None);
+			} else if (shape.front().kind == DeclaratorComponentKind::Array || shape.front().kind == DeclaratorComponentKind::UnknownBoundArray) {
+				shape.front() = DeclaratorComponent::pointer(CVQualifier::None);
+			} else if (shape.front().kind == DeclaratorComponentKind::Function) {
+				shape.insert(shape.begin(), DeclaratorComponent::pointer(CVQualifier::None));
+			} else {
+				shape.front().cv_qualifier = CVQualifier::None;
+			}
+		}
+		return shape;
+	}
+
+	static bool matchStructuredSignatureType(const FunctionType& pattern, const FunctionType& concrete, bool function_parameter,
+		const std::unordered_set<StringHandle, StringHandleHash>& template_param_names,
+		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions,
+		std::vector<SignaturePair>& pending) {
+		TypeSpecifierNode pattern_type = typeSpecifierFromFunctionType(pattern);
+		TypeSpecifierNode concrete_type = typeSpecifierFromFunctionType(concrete);
+		const auto pattern_shape = signatureTypeShape(pattern_type, function_parameter);
+		auto concrete_shape = signatureTypeShape(concrete_type, function_parameter);
+		const StringHandle parameter = pattern.callable_signature ? StringHandle{} : findSignatureParameter(pattern.type_index, template_param_names);
+		if (!parameter.isValid()) {
+			if (pattern_shape != concrete_shape || pattern_type.cv_qualifier() != concrete_type.cv_qualifier() ||
+				pattern.member_class_name != concrete.member_class_name || (pattern.callable_signature == nullptr) != (concrete.callable_signature == nullptr)) {
+				return false;
+			}
+			if (pattern.callable_signature != nullptr) {
+				pending.emplace_back(pattern.callable_signature, concrete.callable_signature);
+				return true;
+			}
+			return FlashCpp::equalTypeIndexIdentity(pattern.type_index, concrete.type_index);
+		}
+		// C++20 [temp.deduct.type]/2,8 combines deductions from each type pair.
+		// Match the written declarator first. For T* vs int**, T binds to int*.
+		if (pattern_shape.size() > concrete_shape.size() || !std::equal(pattern_shape.begin(), pattern_shape.end(), concrete_shape.begin())) {
 			return false;
 		}
-		if (needs_type_index(pattern_type.category()) && pattern_type != concrete_type) {
+		concrete_shape.erase(concrete_shape.begin(), concrete_shape.begin() + static_cast<std::ptrdiff_t>(pattern_shape.size()));
+		CVQualifier cv = concrete_type.cv_qualifier();
+		CVQualifier& deduced_cv = !concrete_shape.empty() && concrete_shape.front().kind == DeclaratorComponentKind::Pointer
+			? concrete_shape.front().cv_qualifier : cv;
+		const auto required_cv = static_cast<uint8_t>(pattern_type.cv_qualifier());
+		const auto available_cv = static_cast<uint8_t>(deduced_cv);
+		if ((available_cv & required_cv) != required_cv) {
 			return false;
 		}
-		return true;
+		deduced_cv = static_cast<CVQualifier>(available_cv & ~required_cv);
+		if (concrete.callable_signature != nullptr && (concrete_shape.empty() || concrete_shape.back().kind == DeclaratorComponentKind::Pointer)) {
+			const TypeIndex type = concrete_shape.empty() ? concrete.callable_signature->return_type_index : nativeTypeIndex(TypeCategory::FunctionPointer);
+			concrete_type.set_type_index(type);
+		}
+		concrete_type.set_cv_qualifier(cv);
+		concrete_type.clear_declarator_shape();
+		concrete_type.set_ordered_declarator(std::move(concrete_shape));
+		return recordDeduction(parameter, TemplateTypeArg(concrete_type), param_substitutions);
 	}
 
 	static bool matchMemberPointerClassName(
@@ -442,31 +518,35 @@ struct TemplatePattern {
 		return false;
 	}
 
-	static bool matchFunctionSignature(
-		const TemplateTypeArg& pattern_arg,
-		const TemplateTypeArg& concrete_arg,
+	static bool matchSignatureComponents(const FunctionSignature& pattern_sig, const FunctionSignature& concrete_sig,
 		const std::unordered_set<StringHandle, StringHandleHash>& template_param_names,
-		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions) {
-		if (pattern_arg.hasFunctionSignature() != concrete_arg.hasFunctionSignature()) {
-			return false;
-		}
-		if (!pattern_arg.hasFunctionSignature()) {
-			return true;
-		}
-
-		const auto& pattern_sig = pattern_arg.functionSignature();
-		const auto& concrete_sig = concrete_arg.functionSignature();
+		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions,
+		std::vector<SignaturePair>& pending) {
 		if (pattern_sig.parameter_type_indices.size() != concrete_sig.parameter_type_indices.size() ||
 			pattern_sig.linkage != concrete_sig.linkage ||
 			normalizeCallingConventionForTemplatePatternMatch(pattern_sig.calling_convention) !=
 				normalizeCallingConventionForTemplatePatternMatch(concrete_sig.calling_convention) ||
 			pattern_sig.is_variadic != concrete_sig.is_variadic ||
-			pattern_sig.return_pointer_depth != concrete_sig.return_pointer_depth ||
-			pattern_sig.return_reference_qualifier != concrete_sig.return_reference_qualifier ||
 			pattern_sig.is_const != concrete_sig.is_const ||
 			pattern_sig.is_volatile != concrete_sig.is_volatile ||
 			pattern_sig.function_reference_qualifier != concrete_sig.function_reference_qualifier ||
 			pattern_sig.is_noexcept != concrete_sig.is_noexcept) {
+			return false;
+		}
+		if (pattern_sig.hasStructuredTypes() && concrete_sig.hasStructuredTypes() && !signatureHasPackParameter(pattern_sig)) {
+			if (!matchStructuredSignatureType(pattern_sig.return_type(), concrete_sig.return_type(), false, template_param_names, param_substitutions, pending)) {
+				return false;
+			}
+			for (size_t index = 0; index < pattern_sig.parameter_types().size(); ++index) {
+				if (!matchStructuredSignatureType(pattern_sig.parameter_types()[index], concrete_sig.parameter_types()[index], true,
+					template_param_names, param_substitutions, pending)) {
+					return false;
+				}
+			}
+			return true;
+		}
+		if (pattern_sig.return_pointer_depth != concrete_sig.return_pointer_depth ||
+			pattern_sig.return_reference_qualifier != concrete_sig.return_reference_qualifier) {
 			return false;
 		}
 		if (!matchFunctionSignatureType(
@@ -482,6 +562,40 @@ struct TemplatePattern {
 			}
 		}
 		return true;
+	}
+
+	static bool matchFunctionSignature(const TemplateTypeArg& pattern_arg, const TemplateTypeArg& concrete_arg,
+		const std::unordered_set<StringHandle, StringHandleHash>& template_param_names,
+		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions) {
+		const FunctionSignature* pattern = pattern_arg.functionSignatureOrNull();
+		const FunctionSignature* concrete = concrete_arg.functionSignatureOrNull();
+		if (pattern == nullptr || concrete == nullptr) {
+			return pattern == concrete;
+		}
+		if ((pattern_arg.category() == TypeCategory::FunctionPointer) != (concrete_arg.category() == TypeCategory::FunctionPointer)) {
+			return false;
+		}
+		// C++20 [dcl.ptr]/1 makes each pointer level's cv part of the type.
+		if (pattern_arg.category() == TypeCategory::FunctionPointer) {
+			TypeSpecifierNode pattern_type = typeSpecifierFromTemplateTypeArgProjection(pattern_arg);
+			TypeSpecifierNode concrete_type = typeSpecifierFromTemplateTypeArgProjection(concrete_arg);
+			if (signatureTypeShape(pattern_type, false) != signatureTypeShape(concrete_type, false)) {
+				return false;
+			}
+		}
+		// Nested callable components are matched on a worklist, with one shared set of deductions.
+		std::vector<SignaturePair> pending;
+		do {
+			if (!matchSignatureComponents(*pattern, *concrete, template_param_names, param_substitutions, pending)) {
+				return false;
+			}
+			if (pending.empty()) {
+				return true;
+			}
+			pattern = pending.back().first;
+			concrete = pending.back().second;
+			pending.pop_back();
+		} while (true);
 	}
 
 	static bool matchArgument(const TemplateTypeArg& pattern_arg, const TemplateTypeArg& concrete_arg,
@@ -595,14 +709,8 @@ struct TemplatePattern {
 			FLASH_LOG(Templates, Trace, "  FAILED: function signature mismatch");
 			return false;
 		}
-		// [temp.deduct.partial]/2,10 and [temp.deduct.type]/5: a callable pattern
-		// deduces its parameters from the return/parameter types (and the member
-		// pointer owner deduced above), not from the whole argument. The
-		// whole-argument path below would re-bind a return/parameter name to the
-		// callable itself, which disagrees with the signature binding as soon as
-		// the callable carries its own declarator shape, such as `T (**)(T)`.
-		// The outer category check keeps `T (*)(T)` from absorbing a bare
-		// `int(int)` argument, whose category follows the return type.
+		// C++20 [temp.class.spec.match]/2 and [temp.deduct.type]/3 deduce through
+		// the callable's return type, parameter types, and any member-pointer owner.
 		if (bare_function_argument || structured_callable_argument) {
 			return true;
 		}

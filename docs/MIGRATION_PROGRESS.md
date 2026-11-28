@@ -817,9 +817,18 @@ remaining pattern schemas by identity, and remove the name fallback.
    signature instead of re-binding them from the whole callable, so
    `S<int (**)(int)>` selects the partial, `S<int (**)(long)>` selects the
    primary, and the single-pointer and function-reference patterns stay
-   distinct; `test_canonical_partial_double_pointer_environment_ret0.cpp` pins
-   those outcomes and zero name fallback. Supported alias-template arguments
-   expand by alias declaration identity before registration. The structural
+   distinct. Multi-level callable matching uses the structured return and
+   parameter declarators after C++20 parameter adjustment. Each pointer
+   level's cv travels from parsing through pattern publication, matching, and
+   the instantiation key. `test_canonical_partial_callable_parameter_declarator_ret0.cpp`
+   and `test_canonical_partial_callable_pointer_cv_ret0.cpp` distinguish
+   `T (**)(T*)` and `T (*const *)(T)` from `int (**)(int)` and exercise their
+   exact matches. Both fixtures pin zero pattern name fallback, and a native
+   test verifies that each pattern record is keyed by its expected canonical
+   environment. `test_canonical_partial_double_pointer_environment_ret0.cpp`
+   covers unqualified double pointers, single pointers, and function references
+   with zero name fallback. Supported alias-template arguments expand by alias
+   declaration identity before registration. The structural
    matcher and canonical importer consume the same expanded pattern, so a
    pointer alias such as `S<Ptr<T>>` matches `S<int*>` and reads its
    environment-keyed record.

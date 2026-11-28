@@ -2233,10 +2233,10 @@ ParseResult Parser::parse_declarator(
 								function_pointer.set_reference_qualifier(
 									function_pointer_reference);
 								if (pointer_wrapper_count > 1) {
-									for (size_t index = first_pointer_index;
-										index <= last_pointer_index; ++index) {
-										function_pointer.add_pointer_level(
-											completed[index].cv_qualifier);
+									// C++20 [dcl.ptr]/1 attaches cv to its own pointer level.
+									// Project the outermost-first spine into innermost-first flat levels.
+									for (size_t index = *function_index; index-- > first_pointer_index;) {
+										function_pointer.add_pointer_level(completed[index].cv_qualifier);
 									}
 								}
 								if (identifier.value().empty()) {

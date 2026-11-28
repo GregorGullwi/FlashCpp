@@ -380,14 +380,15 @@ inline bool isCallablePartialPatternSyntax(const TypeSpecifierNode& syntax) {
 }
 
 // Compose the canonical function identity from imported return and parameter
-// types. [dcl.fct]/5 adjusts a function or array parameter to a pointer, so the
-// same rule must reach the function-pointer and bare-function pattern shapes.
+// types. C++20 [dcl.fct]/5 adjusts function and array parameters to pointers
+// and removes top-level parameter cv when forming the function type.
 // The parameter slots belong to the caller's scratch frame, so adjustment
 // rewrites them in place instead of allocating a second list.
 inline TypeId canonicalCallableFromPartialPattern(CanonicalTypeTable& table, const FunctionSignature& signature, TypeId return_type,
 	std::span<TypeId> parameters) {
 	for (TypeId& parameter : parameters) {
-		const CanonicalTypeNode parameter_node = table.node(table.withoutTopLevelQualifiers(parameter));
+		parameter = table.withoutTopLevelQualifiers(parameter);
+		const CanonicalTypeNode parameter_node = table.node(parameter);
 		if (parameter_node.kind == CanonicalTypeKind::Array) {
 			parameter = table.pointer(parameter_node.child);
 		} else if (parameter_node.kind == CanonicalTypeKind::Function) {
