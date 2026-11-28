@@ -2201,6 +2201,96 @@ TEST_CASE("Double-pointer partial patterns select through published environments
 	CHECK(patterns == 3);
 }
 
+TEST_CASE("Callable partial declarators publish structurally distinct environments") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const char* path = nullptr;
+	bool pointer_parameter = false;
+	SUBCASE("Pointer parameter") {
+		path = "tests/test_canonical_partial_callable_parameter_declarator_ret0.cpp";
+		pointer_parameter = true;
+	}
+	SUBCASE("Const inner pointer") {
+		path = "tests/test_canonical_partial_callable_pointer_cv_ret0.cpp";
+	}
+	REQUIRE(path != nullptr);
+	std::ifstream fixture(path);
+	REQUIRE(fixture.is_open());
+	const std::string code((std::istreambuf_iterator<char>(fixture)), std::istreambuf_iterator<char>());
+	CompileContext compile_context;
+	compile_context.setInputFile(path);
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	const uint64_t fallback_before = gPartialPatternNameFallbackCount;
+	REQUIRE(!parser.parse().is_error());
+	CHECK(gPartialPatternNameFallbackCount == fallback_before);
+
+	const auto primary = context.templateDecls().findPrimaryClassTemplate(ownerIdFromNamespaceHandle(NamespaceRegistry::GLOBAL_NAMESPACE),
+		StringTable::getOrInternStringHandle("Signal"));
+	REQUIRE(primary.has_value());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const TypeId parameter = table.templateParameter(*primary, 0);
+	const TypeId parameters[] = {pointer_parameter ? table.pointer(parameter) : parameter};
+	const TypeId function = table.function(parameter, parameters, false, CVQualifier::None, ReferenceQualifier::None, false,
+		CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	const TypeId inner = table.qualify(table.pointer(function), pointer_parameter ? CVQualifier::None : CVQualifier::Const);
+	const TypeId arguments[] = {table.pointer(inner)};
+	const TypeId normalized = table.templateSpecialization(*primary, arguments);
+	const TemplateDeclId expected = context.templateDecls().publishClassPartialEnvironment(*primary, normalized, StringHandle{});
+	size_t patterns = 0;
+	for (const ASTNode& node : parser.get_nodes()) {
+		if (!node.is<StructDeclarationNode>()) continue;
+		const StructDeclarationNode& pattern = node.as<StructDeclarationNode>();
+		if (!gTemplateRegistry.isClassTemplateSpecializationPattern(&pattern)) continue;
+		++patterns;
+		const TemplateDeclId environment = pattern.partial_specialization_environment();
+		CHECK(environment == expected);
+		CHECK(gTemplateRegistry.tryGetPartialPatternStructInfo(environment) != nullptr);
+	}
+	CHECK(patterns == 1);
+}
+
+TEST_CASE("Callable partial matching keeps nested signatures off the native stack") {
+	clearLegacyTypeTablesForTesting();
+	FrontendContext context;
+	initialize_native_types();
+	constexpr size_t depth = 4096;
+	std::vector<FunctionSignature> pattern(depth);
+	std::vector<FunctionSignature> concrete(depth);
+	const TypeIndex int_type = nativeTypeIndex(TypeCategory::Int);
+	const TypeIndex function_pointer = nativeTypeIndex(TypeCategory::FunctionPointer);
+	FunctionType result;
+	result.type_index = int_type;
+	for (size_t index = 0; index < depth; ++index) {
+		pattern[index].setReturnType(result);
+		concrete[index].setReturnType(result);
+		if (index + 1 < depth) {
+			FunctionType parameter;
+			parameter.type_index = function_pointer;
+			parameter.callable_signature = &pattern[index + 1];
+			pattern[index].setParameterTypes({parameter});
+			parameter.callable_signature = &concrete[index + 1];
+			concrete[index].setParameterTypes({parameter});
+		}
+	}
+	TemplateTypeArg pattern_arg;
+	pattern_arg.type_index = function_pointer;
+	pattern_arg.setFunctionSignature(pattern.front());
+	TemplateTypeArg concrete_arg;
+	concrete_arg.type_index = function_pointer;
+	concrete_arg.setFunctionSignature(concrete.front());
+	std::unordered_set<StringHandle, StringHandleHash> names;
+	std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> bindings;
+	CHECK(TemplatePattern::matchFunctionSignature(pattern_arg, concrete_arg, names, bindings));
+	result.type_index = nativeTypeIndex(TypeCategory::Long);
+	concrete.back().setReturnType(result);
+	CHECK_FALSE(TemplatePattern::matchFunctionSignature(pattern_arg, concrete_arg, names, bindings));
+}
+
 TEST_CASE("Partial pattern normalization keeps deep declarators off the native stack") {
 	clearLegacyTypeTablesForTesting();
 	FrontendContext context;

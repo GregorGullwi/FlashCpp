@@ -1229,6 +1229,18 @@ inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	result.has_unsized_outer_array_dimension = arg.has_unsized_outer_array_dimension;
 	result.array_sizes.assign(arg.array_dimensions.begin(), arg.array_dimensions.end());
 	result.ordered_declarator = arg.ordered_declarator;
+	// C++20 [dcl.ptr]/1 gives each pointer its own cv. Preserve the qualified
+	// levels of flat callables in the same spine used for ordered declarators.
+	const auto is_qualified = [](CVQualifier cv) {
+		return cv != CVQualifier::None;
+	};
+	if (arg.category() == TypeCategory::FunctionPointer && result.ordered_declarator.empty() &&
+		std::ranges::any_of(arg.pointer_cv_qualifiers, is_qualified)) {
+		result.ordered_declarator.reserve(arg.pointer_cv_qualifiers.size());
+		for (size_t index = arg.pointer_cv_qualifiers.size(); index-- > 0;) {
+			result.ordered_declarator.push_back(DeclaratorComponent::pointer(arg.pointer_cv_qualifiers[index]));
+		}
+	}
 	result.function_signature = arg.copyFunctionSignature();
 	result.is_dependent =
 		arg.is_dependent &&
