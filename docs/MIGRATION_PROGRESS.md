@@ -839,7 +839,13 @@ remaining pattern schemas by identity, and remove the name fallback.
    marker, so `S<R(Args...)>` and `S<R (*)(Args...)>` select their partials, an
    empty pack matches, and a fixed-parameter pattern remains more specialized;
    `test_canonical_partial_signature_pack_environment_ret0.cpp` pins those
-   outcomes and zero name fallback. Supported alias-template arguments expand by
+   outcomes and zero name fallback. A reference on a callable's return type
+   (`S<R& (T)>` or `S<R& (*)(T)>`) is now consumed by the template-argument
+   parser and kept on the function signature rather than the callable wrapper,
+   so a value-returning callable stays distinct and the pattern publishes its
+   environment; `test_canonical_partial_reference_return_environment_ret0.cpp`
+   pins exact selection, the mismatch control, and zero name fallback.
+   Supported alias-template arguments expand by
    alias declaration identity before registration. The structural
    matcher and canonical importer consume the same expanded pattern, so a
    pointer alias such as `S<Ptr<T>>` matches `S<int*>` and reads its
