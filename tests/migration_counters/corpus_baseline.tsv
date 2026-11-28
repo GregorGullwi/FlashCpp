@@ -852,3 +852,6 @@ tests/test_full_specialization_nested_conversion_ret0.cpp	unscoped_enum_typeinde
 # Multi-level callable partials with structural parameter and pointer declarators.
 tests/test_canonical_partial_callable_parameter_declarator_ret0.cpp	partial_pattern_name_fallback	0
 tests/test_canonical_partial_callable_pointer_cv_ret0.cpp	partial_pattern_name_fallback	0
+# Function parameter adjustment in callable partials.
+tests/test_canonical_partial_adjusted_function_parameter_ret0.cpp	partial_pattern_name_fallback	0
+tests/test_canonical_partial_aliased_function_parameter_ret0.cpp	partial_pattern_name_fallback	0

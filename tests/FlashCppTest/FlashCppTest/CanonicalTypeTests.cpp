@@ -2207,12 +2207,23 @@ TEST_CASE("Callable partial declarators publish structurally distinct environmen
 	FrontendContext context;
 	const char* path = nullptr;
 	bool pointer_parameter = false;
+	bool adjusted_function_parameter = false;
+	bool aliased_function_parameter = false;
 	SUBCASE("Pointer parameter") {
 		path = "tests/test_canonical_partial_callable_parameter_declarator_ret0.cpp";
 		pointer_parameter = true;
 	}
 	SUBCASE("Const inner pointer") {
 		path = "tests/test_canonical_partial_callable_pointer_cv_ret0.cpp";
+	}
+	SUBCASE("Direct function parameter") {
+		path = "tests/test_canonical_partial_adjusted_function_parameter_ret0.cpp";
+		adjusted_function_parameter = true;
+	}
+	SUBCASE("Aliased function parameter") {
+		path = "tests/test_canonical_partial_aliased_function_parameter_ret0.cpp";
+		adjusted_function_parameter = true;
+		aliased_function_parameter = true;
 	}
 	REQUIRE(path != nullptr);
 	std::ifstream fixture(path);
@@ -2230,14 +2241,22 @@ TEST_CASE("Callable partial declarators publish structurally distinct environmen
 	CHECK(gPartialPatternNameFallbackCount == fallback_before);
 
 	const auto primary = context.templateDecls().findPrimaryClassTemplate(ownerIdFromNamespaceHandle(NamespaceRegistry::GLOBAL_NAMESPACE),
-		StringTable::getOrInternStringHandle("Signal"));
+		StringTable::getOrInternStringHandle(adjusted_function_parameter ? "Probe" : "Signal"));
 	REQUIRE(primary.has_value());
 	CanonicalTypeTable& table = context.canonicalTypes();
 	const TypeId parameter = table.templateParameter(*primary, 0);
-	const TypeId parameters[] = {pointer_parameter ? table.pointer(parameter) : parameter};
+	TypeId signature_parameter = pointer_parameter ? table.pointer(parameter) : parameter;
+	if (adjusted_function_parameter) {
+		const TypeId nested_parameters[] = {table.builtin(CanonicalBuiltinKind::Long)};
+		const TypeId nested_return = aliased_function_parameter ? table.builtin(CanonicalBuiltinKind::Int) : parameter;
+		const TypeId nested = table.function(nested_return, nested_parameters, false, CVQualifier::None, ReferenceQualifier::None, false,
+			CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+		signature_parameter = table.pointer(nested);
+	}
+	const TypeId parameters[] = {signature_parameter};
 	const TypeId function = table.function(parameter, parameters, false, CVQualifier::None, ReferenceQualifier::None, false,
 		CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
-	const TypeId inner = table.qualify(table.pointer(function), pointer_parameter ? CVQualifier::None : CVQualifier::Const);
+	const TypeId inner = table.qualify(table.pointer(function), pointer_parameter || adjusted_function_parameter ? CVQualifier::None : CVQualifier::Const);
 	const TypeId arguments[] = {table.pointer(inner)};
 	const TypeId normalized = table.templateSpecialization(*primary, arguments);
 	const TemplateDeclId expected = context.templateDecls().publishClassPartialEnvironment(*primary, normalized, StringHandle{});
@@ -2252,6 +2271,53 @@ TEST_CASE("Callable partial declarators publish structurally distinct environmen
 		CHECK(gTemplateRegistry.tryGetPartialPatternStructInfo(environment) != nullptr);
 	}
 	CHECK(patterns == 1);
+}
+
+TEST_CASE("Direct function parameters keep nested clauses off the native stack") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	constexpr size_t depth = 1024;
+	std::string code = "template<class T> struct Deep {}; template<class T> struct Deep<T (**)(";
+	for (size_t index = 0; index < depth; ++index) {
+		code += "T(";
+	}
+	code += "long";
+	code.append(depth, ')');
+	code += ")> {};";
+	CompileContext compile_context;
+	compile_context.setInputFile("direct_function_parameter_depth.cpp");
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	REQUIRE(!parser.parse().is_error());
+	size_t patterns = 0;
+	for (const ASTNode& node : parser.get_nodes()) {
+		if (!node.is<StructDeclarationNode>()) continue;
+		const StructDeclarationNode& pattern = node.as<StructDeclarationNode>();
+		if (!gTemplateRegistry.isClassTemplateSpecializationPattern(&pattern)) continue;
+		++patterns;
+		const TemplateDeclId environment = pattern.partial_specialization_environment();
+		CHECK(static_cast<bool>(environment));
+		CHECK(gTemplateRegistry.tryGetPartialPatternStructInfo(environment) != nullptr);
+	}
+	CHECK(patterns == 1);
+}
+
+TEST_CASE("A direct function parameter clause rejects a trailing comma") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	CompileContext compile_context;
+	compile_context.setInputFile("direct_function_parameter_trailing_comma.cpp");
+	Lexer lexer("template<class T> struct Probe {}; template<class T> struct Probe<T (**)(T(long,))> {};");
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	CHECK(parser.parse().is_error());
 }
 
 TEST_CASE("Callable partial matching keeps nested signatures off the native stack") {

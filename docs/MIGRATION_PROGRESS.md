@@ -827,7 +827,14 @@ remaining pattern schemas by identity, and remove the name fallback.
    test verifies that each pattern record is keyed by its expected canonical
    environment. `test_canonical_partial_double_pointer_environment_ret0.cpp`
    covers unqualified double pointers, single pointers, and function references
-   with zero name fallback. Supported alias-template arguments expand by alias
+   with zero name fallback. A function-typed parameter in a callable signature
+   adjusts to a pointer for both a direct abstract declarator such as `T(long)`
+   and an ordinary function-type alias. The canonical importer takes the return
+   type from the structured signature so an alias publishes the adjusted
+   parameter's identity. The direct and aliased function-parameter regressions
+   verify exact selection, differing nested signatures, and zero name fallback.
+   The parser handles nested direct parameter clauses on a worklist.
+   Supported alias-template arguments expand by alias
    declaration identity before registration. The structural
    matcher and canonical importer consume the same expanded pattern, so a
    pointer alias such as `S<Ptr<T>>` matches `S<int*>` and reads its
