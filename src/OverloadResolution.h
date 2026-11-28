@@ -4026,12 +4026,21 @@ inline std::optional<ConversionPlan> tryBuildCanonicalReferenceBindingPlan(const
 	const auto [target_type, target_referent_cv] = stripCanonicalTopCv(table, target_referent);
 	const CanonicalTypeKind source_referent_kind = table.node(source_type).kind;
 	const CanonicalTypeKind target_referent_kind = table.node(target_type).kind;
-	// A class source can reach a non-class reference target only through a
-	// user-defined conversion. Defer that decision to the compatibility path,
-	// which selects conversion operators and their trailing conversions.
+	// [dcl.init.ref]/5 and [over.match.ref]/1: a class lvalue can bind to a
+	// non-class reference only through a conversion function whose result binds
+	// directly. Rank that canonical user-defined sequence here instead of
+	// deferring to the syntax compatibility planner.
 	if ((source_referent_kind == CanonicalTypeKind::Record || source_referent_kind == CanonicalTypeKind::TemplateSpecialization) &&
 		target_referent_kind != CanonicalTypeKind::Record && target_referent_kind != CanonicalTypeKind::TemplateSpecialization) {
-		return std::nullopt;
+		const ValueCategory udc_source_category = source_is_lvalue ? ValueCategory::LValue : ValueCategory::PRValue;
+		const auto selected = trySelectCanonicalUserDefinedConversionOperator(source_type, to, /*allow_explicit=*/false, udc_source_category);
+		if (!selected.has_value()) {
+			return std::nullopt;
+		}
+		if (selected->ambiguous) {
+			return ConversionPlan::no_match();
+		}
+		return makeUserDefinedConversionFunctionPlan(*selected);
 	}
 	if (table.node(source_type).kind == CanonicalTypeKind::Function && table.node(target_type).kind == CanonicalTypeKind::Function) {
 		return tryBuildCanonicalDirectReferenceBindingPlan(table, source_import.type, target_import.type);

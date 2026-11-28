@@ -311,6 +311,11 @@ remaining pattern schemas by identity, and remove the name fallback.
    user-defined constructor paths; complete derived-to-base and callable tails.
    Keep compatibility only for shapes the canonical importer or declaration
    bridge cannot represent, and audit those boundaries before deleting them.
+   Class-to-non-class reference binding now ranks through the canonical
+   user-defined conversion selector ([dcl.init.ref]/5, [over.match.ref]/1)
+   instead of the syntax compatibility planner. This lowers the
+   `ast_to_ir_semantic` migration counter on the implicit copy/move ODR
+   regression from 42 to 40 without changing diagnostic contracts.
    Conversion-operator value tails now reuse the imported return and target
    `TypeId`s for exact matches, builtin conversions, and supported callable and
    class-value conversions. Reference tails use the canonical reference-argument
