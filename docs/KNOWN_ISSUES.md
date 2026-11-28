@@ -152,6 +152,23 @@ supported member-partial materialization records it explicitly; the inference is
 kept only for declarations with no such producer and must be replaced when one
 appears rather than extended with a spelling heuristic.
 
+## Callable partial ordering does not rank wrapped signature packs
+
+With both `template<class R, class... T> struct S<R (*)(T...)>` and
+`template<class R, class... T> struct S<R (*)(T*...)>`, the wrapped partial is
+more specialized for signatures such as `int (*)(int*, long*)` and
+`int (*)()`. FlashCpp matches both partials but gives both the same
+specificity score, so declaration order decides which one wins. Compare the
+callable pack patterns in both deduction directions for partial ordering.
+
+## Template-argument callable types omit C variadic identity
+
+The compact callable parser accepts a C variadic ellipsis in template argument
+type syntax but omits it from the signature identity. For example, a partial
+with a scalar type parameter in `S<R (*)(T*...)>` matches
+`S<int (*)(int*)>` as well as `S<int (*)(int*...)>`. The C ellipsis needs to
+reach the callable signature independently of the pack expansion marker.
+
 ## Out-of-line member function template identity has unresolved shapes
 
 The following shapes remain unmerged and fail closed: the definition keeps no

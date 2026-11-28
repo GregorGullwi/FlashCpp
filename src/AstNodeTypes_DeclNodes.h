@@ -1163,6 +1163,9 @@ enum class DependentPlaceholderKind : uint8_t {
 	// Op<T>::value_type).  The name contains "::" because it encodes
 	// "Base::member", but that should be tested via this flag, not string ops.
 	DependentMemberType,
+
+	// A registered type-like template parameter declared with an ellipsis.
+	TemplateParameterPack,
 };
 
 // Phase 5: Placeholder for binding storage in InstantiationContext
@@ -1571,6 +1574,7 @@ struct TypeInfo {
 	// Phase 4: explicit placeholder queries (replace string heuristics like name.find("::"))
 	bool isDependentMemberType() const { return placeholder_kind_ == DependentPlaceholderKind::DependentMemberType; }
 	bool isDependentPlaceholder() const { return placeholder_kind_ != DependentPlaceholderKind::None; }
+	bool isTemplateParameterPack() const { return placeholder_kind_ == DependentPlaceholderKind::TemplateParameterPack; }
 };
 
 using TemplateArgInfoVector = TypeInfo::TemplateArgInfoVector;

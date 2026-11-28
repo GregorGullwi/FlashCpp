@@ -2257,6 +2257,40 @@ TEST_CASE("Signature-pack partial patterns select through published environments
 	CHECK(environments[0] != environments[1]);
 }
 
+TEST_CASE("Wrapped signature packs select through published environments") {
+	clearLegacyTypeTablesForTesting();
+	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
+	FrontendContext context;
+	const char* path = "tests/test_canonical_partial_wrapped_signature_pack_ret0.cpp";
+	std::ifstream fixture(path);
+	REQUIRE(fixture.is_open());
+	const std::string code((std::istreambuf_iterator<char>(fixture)), std::istreambuf_iterator<char>());
+	CompileContext compile_context;
+	compile_context.setInputFile(path);
+	Lexer lexer(code);
+	SemanticAnalysis sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, sema);
+	TemplateEngine template_engine;
+	parser.attachTemplateEngine(template_engine);
+	const uint64_t fallback_before = gPartialPatternNameFallbackCount;
+	REQUIRE(!parser.parse().is_error());
+	CHECK(gPartialPatternNameFallbackCount == fallback_before);
+
+	const auto primary = context.templateDecls().findPrimaryClassTemplate(ownerIdFromNamespaceHandle(NamespaceRegistry::GLOBAL_NAMESPACE),
+		StringTable::getOrInternStringHandle("WrappedSignature"));
+	REQUIRE(primary.has_value());
+	CanonicalTypeTable& table = context.canonicalTypes();
+	const TypeId parameter = table.templateParameter(*primary, 1);
+	const TypeId parameters[] = {table.pointer(parameter)};
+	const TypeId function = table.function(table.templateParameter(*primary, 0), parameters, false, CVQualifier::None, ReferenceQualifier::None, false,
+		CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+	const TypeId arguments[] = {table.pointer(function)};
+	const TypeId normalized = table.templateSpecialization(*primary, arguments);
+	const StringHandle identity = StringTable::getOrInternStringHandle("P2;0:0N:U;1:0V:U;A1;S;F0:1,;");
+	const TemplateDeclId expected = context.templateDecls().publishClassPartialEnvironment(*primary, normalized, identity);
+	CHECK(gTemplateRegistry.tryGetPartialPatternStructInfo(expected) != nullptr);
+}
+
 TEST_CASE("Callable partial declarators publish structurally distinct environments") {
 	clearLegacyTypeTablesForTesting();
 	gTemplateRegistry.clear(); gConceptRegistry.clear(); gSymbolTable.clear();
@@ -2407,10 +2441,36 @@ TEST_CASE("Callable partial matching keeps nested signatures off the native stac
 	concrete_arg.setFunctionSignature(concrete.front());
 	std::unordered_set<StringHandle, StringHandleHash> names;
 	std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> bindings;
-	CHECK(TemplatePattern::matchFunctionSignature(pattern_arg, concrete_arg, names, bindings));
+	std::vector<TemplateBinding> signature_packs;
+	CHECK(TemplatePattern::matchFunctionSignature(pattern_arg, concrete_arg, names, bindings, signature_packs));
 	result.type_index = nativeTypeIndex(TypeCategory::Long);
 	concrete.back().setReturnType(result);
-	CHECK_FALSE(TemplatePattern::matchFunctionSignature(pattern_arg, concrete_arg, names, bindings));
+	CHECK_FALSE(TemplatePattern::matchFunctionSignature(pattern_arg, concrete_arg, names, bindings, signature_packs));
+
+	const StringHandle pack_name = StringTable::getOrInternStringHandle("DeepPack");
+	names.insert(pack_name);
+	FunctionType pack;
+	pack.template_parameter_name = pack_name;
+	pack.is_pack_expansion = true;
+	pack.pointer_qualifiers.push_back(CVQualifier::None);
+	pattern.back().setParameterTypes({pack});
+	result.type_index = int_type;
+	concrete.back().setReturnType(result);
+	FunctionType int_pointer = result;
+	int_pointer.pointer_qualifiers.push_back(CVQualifier::None);
+	FunctionType long_pointer = int_pointer;
+	long_pointer.type_index = nativeTypeIndex(TypeCategory::Long);
+	concrete.back().setParameterTypes({int_pointer, long_pointer});
+	REQUIRE(TemplatePattern::matchFunctionSignature(pattern_arg, concrete_arg, names, bindings, signature_packs));
+	REQUIRE(signature_packs.size() == 1);
+	REQUIRE(signature_packs.front().args.size() == 2);
+	CHECK(signature_packs.front().args[0].type_index == int_type);
+	CHECK(signature_packs.front().args[1].type_index == long_pointer.type_index);
+	CHECK(signature_packs.front().args[0].pointer_depth == 0);
+	CHECK(signature_packs.front().args[1].pointer_depth == 0);
+	signature_packs.clear();
+	concrete.back().setParameterTypes({int_pointer, result});
+	CHECK_FALSE(TemplatePattern::matchFunctionSignature(pattern_arg, concrete_arg, names, bindings, signature_packs));
 }
 
 TEST_CASE("Reference-return callable partial patterns select through published environments") {
@@ -2502,13 +2562,14 @@ TEST_CASE("Callable matcher rejects a different dependent noexcept identity") {
 	const TemplateTypeArg plain = make_arg(ExprId{});
 	std::unordered_set<StringHandle, StringHandleHash> names;
 	std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> bindings;
-	CHECK(TemplatePattern::matchFunctionSignature(pattern, matching, names, bindings));
+	std::vector<TemplateBinding> signature_packs;
+	CHECK(TemplatePattern::matchFunctionSignature(pattern, matching, names, bindings, signature_packs));
 	// A different retained dependent expression must not select the partial even
 	// though both signatures report `is_noexcept == false`.
-	CHECK_FALSE(TemplatePattern::matchFunctionSignature(pattern, different, names, bindings));
+	CHECK_FALSE(TemplatePattern::matchFunctionSignature(pattern, different, names, bindings, signature_packs));
 	// A concrete signature without a dependent specification stays a non-deduced
 	// exception-specification context and keeps matching the pattern.
-	CHECK(TemplatePattern::matchFunctionSignature(pattern, plain, names, bindings));
+	CHECK(TemplatePattern::matchFunctionSignature(pattern, plain, names, bindings, signature_packs));
 }
 
 TEST_CASE("Partial pattern normalization keeps deep declarators off the native stack") {

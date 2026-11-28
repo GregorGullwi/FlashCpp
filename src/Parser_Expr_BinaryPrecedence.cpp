@@ -1911,14 +1911,15 @@ bool Parser::parse_function_type_parameter_list(std::vector<FunctionType>& out_p
 				return false;
 			}
 
-			// Handle pack expansion (...) after a parameter type
-			if (peek() == "..."_tok) {
-				advance(); // consume '...'
-				param_type.set_pack_expansion(true);
-			}
-
-			// Apply pointer/reference modifiers to the parameter type
+			// [temp.variadic]/4: the pack pattern includes the parameter declarator.
 			consume_pointer_ref_modifiers(param_type);
+			if (consume("..."_tok)) {
+				// [dcl.fct]: the comma may be omitted before a C variadic ellipsis.
+				const TypeInfo* parameter_info = tryGetTypeInfo(param_type.type_index());
+				if (parameter_info != nullptr && parameter_info->isTemplateParameterPack()) {
+					param_type.set_pack_expansion(true);
+				}
+			}
 			out_param_types.push_back(makeFunctionType(param_type));
 		} else {
 			return false; // Parsing failed

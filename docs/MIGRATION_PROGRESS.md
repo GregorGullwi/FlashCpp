@@ -853,7 +853,13 @@ remaining pattern schemas by identity, and remove the name fallback.
    marker, so `S<R(Args...)>` and `S<R (*)(Args...)>` select their partials, an
    empty pack matches, and a fixed-parameter pattern remains more specialized;
    `test_canonical_partial_signature_pack_environment_ret0.cpp` pins those
-   outcomes and zero name fallback. A reference on a callable's return type
+   outcomes and zero name fallback. A trailing pack can also wrap its type
+   parameter in a declarator such as `T*...` or `T&...`. Each concrete
+   parameter is matched against that declarator before the deduced types are
+   bound as a group. `test_canonical_partial_wrapped_signature_pack_ret0.cpp`
+   checks mixed and empty groups, exact element types, fixed prefixes, and
+   repeated pack deductions. The native guard checks canonical publication and
+   zero name fallback. A reference on a callable's return type
    (`S<R& (T)>` or `S<R& (*)(T)>`) is now consumed by the template-argument
    parser and kept on the function signature rather than the callable wrapper,
    so a value-returning callable stays distinct and the pattern publishes its

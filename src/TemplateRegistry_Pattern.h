@@ -433,39 +433,23 @@ struct TemplatePattern {
 		return shape;
 	}
 
-	static bool matchStructuredSignatureType(const FunctionType& pattern, const FunctionType& concrete, bool function_parameter,
-		const std::unordered_set<StringHandle, StringHandleHash>& template_param_names,
-		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions,
-		std::vector<SignaturePair>& pending) {
-		TypeSpecifierNode pattern_type = typeSpecifierFromFunctionType(pattern);
+	static std::optional<TemplateTypeArg> deduceStructuredSignatureType(std::span<const DeclaratorComponent> pattern_shape,
+		CVQualifier pattern_cv, const FunctionType& concrete, bool function_parameter) {
 		TypeSpecifierNode concrete_type = typeSpecifierFromFunctionType(concrete);
-		const auto pattern_shape = signatureTypeShape(pattern_type, function_parameter);
 		auto concrete_shape = signatureTypeShape(concrete_type, function_parameter);
-		const StringHandle parameter = pattern.callable_signature ? StringHandle{} : findSignatureParameter(pattern.type_index, template_param_names);
-		if (!parameter.isValid()) {
-			if (pattern_shape != concrete_shape || pattern_type.cv_qualifier() != concrete_type.cv_qualifier() ||
-				pattern.member_class_name != concrete.member_class_name || (pattern.callable_signature == nullptr) != (concrete.callable_signature == nullptr)) {
-				return false;
-			}
-			if (pattern.callable_signature != nullptr) {
-				pending.emplace_back(pattern.callable_signature, concrete.callable_signature);
-				return true;
-			}
-			return FlashCpp::equalTypeIndexIdentity(pattern.type_index, concrete.type_index);
-		}
 		// C++20 [temp.deduct.type]/2,8 combines deductions from each type pair.
 		// Match the written declarator first. For T* vs int**, T binds to int*.
 		if (pattern_shape.size() > concrete_shape.size() || !std::equal(pattern_shape.begin(), pattern_shape.end(), concrete_shape.begin())) {
-			return false;
+			return std::nullopt;
 		}
 		concrete_shape.erase(concrete_shape.begin(), concrete_shape.begin() + static_cast<std::ptrdiff_t>(pattern_shape.size()));
 		CVQualifier cv = concrete_type.cv_qualifier();
 		CVQualifier& deduced_cv = !concrete_shape.empty() && concrete_shape.front().kind == DeclaratorComponentKind::Pointer
 			? concrete_shape.front().cv_qualifier : cv;
-		const auto required_cv = static_cast<uint8_t>(pattern_type.cv_qualifier());
+		const auto required_cv = static_cast<uint8_t>(pattern_cv);
 		const auto available_cv = static_cast<uint8_t>(deduced_cv);
 		if ((available_cv & required_cv) != required_cv) {
-			return false;
+			return std::nullopt;
 		}
 		deduced_cv = static_cast<CVQualifier>(available_cv & ~required_cv);
 		if (concrete.callable_signature != nullptr && (concrete_shape.empty() || concrete_shape.back().kind == DeclaratorComponentKind::Pointer)) {
@@ -475,7 +459,31 @@ struct TemplatePattern {
 		concrete_type.set_cv_qualifier(cv);
 		concrete_type.clear_declarator_shape();
 		concrete_type.set_ordered_declarator(std::move(concrete_shape));
-		return recordDeduction(parameter, TemplateTypeArg(concrete_type), param_substitutions);
+		concrete_type.set_pack_expansion(false);
+		return TemplateTypeArg(concrete_type);
+	}
+
+	static bool matchStructuredSignatureType(const FunctionType& pattern, const FunctionType& concrete, bool function_parameter,
+		const std::unordered_set<StringHandle, StringHandleHash>& template_param_names,
+		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions, std::vector<SignaturePair>& pending) {
+		TypeSpecifierNode pattern_type = typeSpecifierFromFunctionType(pattern);
+		const auto pattern_shape = signatureTypeShape(pattern_type, function_parameter);
+		const StringHandle parameter = pattern.callable_signature ? StringHandle{} : findSignatureParameter(pattern.type_index, template_param_names);
+		if (parameter.isValid()) {
+			const auto deduction = deduceStructuredSignatureType(pattern_shape, pattern_type.cv_qualifier(), concrete, function_parameter);
+			return deduction.has_value() && recordDeduction(parameter, *deduction, param_substitutions);
+		}
+		TypeSpecifierNode concrete_type = typeSpecifierFromFunctionType(concrete);
+		const auto concrete_shape = signatureTypeShape(concrete_type, function_parameter);
+		if (pattern_shape != concrete_shape || pattern_type.cv_qualifier() != concrete_type.cv_qualifier() ||
+			pattern.member_class_name != concrete.member_class_name || (pattern.callable_signature == nullptr) != (concrete.callable_signature == nullptr)) {
+			return false;
+		}
+		if (pattern.callable_signature != nullptr) {
+			pending.emplace_back(pattern.callable_signature, concrete.callable_signature);
+			return true;
+		}
+		return FlashCpp::equalTypeIndexIdentity(pattern.type_index, concrete.type_index);
 	}
 
 	static bool matchMemberPointerClassName(
@@ -508,14 +516,6 @@ struct TemplatePattern {
 			: calling_convention;
 	}
 
-	// [temp.deduct.call]/1: a function parameter pack matches the remaining
-	// concrete parameter list. The adapter projects the parameter's complete
-	// declarator shape so a deduced pack element keeps its pointer and array
-	// structure.
-	static TemplateTypeArg deducedArgFromFunctionParameter(const FunctionType& parameter) {
-		return deducedTemplateArgFromFunctionType(parameter);
-	}
-
 	// Only a trailing parameter pack can consume a variable concrete tail.
 	static const FunctionType* trailingSignaturePack(const FunctionSignature& signature) {
 		const auto& parameters = signature.parameter_types();
@@ -532,10 +532,31 @@ struct TemplatePattern {
 		return name_info != nullptr ? name_info->name() : StringHandle{};
 	}
 
+	// [temp.deduct.type]/10: deduce one pack element from each remaining parameter.
+	static bool deduceTrailingSignaturePack(const FunctionType& pack, std::span<const FunctionType> concrete_parameters,
+		const std::unordered_set<StringHandle, StringHandleHash>& template_param_names, std::vector<TemplateBinding>& signature_packs) {
+		const StringHandle pack_name = signaturePackName(pack);
+		if (!pack_name.isValid() || !template_param_names.contains(pack_name) || pack.callable_signature != nullptr) {
+			return false;
+		}
+		TypeSpecifierNode pattern_type = typeSpecifierFromFunctionType(pack);
+		const auto pattern_shape = signatureTypeShape(pattern_type, true);
+		TemplateBinding& binding = signature_packs.emplace_back(TemplateBinding{pack_name, TemplateParameterKind::Type, true, {}});
+		binding.args.reserve(concrete_parameters.size());
+		for (const FunctionType& concrete_parameter : concrete_parameters) {
+			auto deduction = deduceStructuredSignatureType(pattern_shape, pattern_type.cv_qualifier(), concrete_parameter, true);
+			if (!deduction.has_value()) {
+				return false;
+			}
+			binding.args.push_back(std::move(*deduction));
+		}
+		return true;
+	}
+
 	static bool matchSignatureComponents(const FunctionSignature& pattern_sig, const FunctionSignature& concrete_sig,
 		const std::unordered_set<StringHandle, StringHandleHash>& template_param_names,
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions,
-		std::vector<SignaturePair>& pending) {
+		std::vector<SignaturePair>& pending, std::vector<TemplateBinding>& signature_packs) {
 		const FunctionType* pack = trailingSignaturePack(pattern_sig);
 		const size_t pattern_parameter_count = pattern_sig.parameter_type_indices.size();
 		const size_t concrete_parameter_count = concrete_sig.parameter_type_indices.size();
@@ -592,12 +613,10 @@ struct TemplatePattern {
 				}
 			}
 		}
-		if (pack != nullptr && fixed_count < concrete_parameter_count) {
-			const StringHandle pack_name = signaturePackName(*pack);
-			if (!pack_name.isValid() || !template_param_names.count(pack_name)) return false;
-			TemplateTypeArg representative = deducedArgFromFunctionParameter(concrete_sig.parameter_types()[fixed_count]);
-			representative.is_pack = true;
-			if (!recordDeduction(pack_name, representative, param_substitutions)) {
+		if (pack != nullptr) {
+			const auto parameters = concrete_sig.parameter_types();
+			if (parameters.size() != concrete_parameter_count ||
+				!deduceTrailingSignaturePack(*pack, parameters.subspan(fixed_count), template_param_names, signature_packs)) {
 				return false;
 			}
 		}
@@ -606,7 +625,7 @@ struct TemplatePattern {
 
 	static bool matchFunctionSignature(const TemplateTypeArg& pattern_arg, const TemplateTypeArg& concrete_arg,
 		const std::unordered_set<StringHandle, StringHandleHash>& template_param_names,
-		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions) {
+		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions, std::vector<TemplateBinding>& signature_packs) {
 		const FunctionSignature* pattern = pattern_arg.functionSignatureOrNull();
 		const FunctionSignature* concrete = concrete_arg.functionSignatureOrNull();
 		if (pattern == nullptr || concrete == nullptr) {
@@ -626,7 +645,7 @@ struct TemplatePattern {
 		// Nested callable components are matched on a worklist, with one shared set of deductions.
 		std::vector<SignaturePair> pending;
 		do {
-			if (!matchSignatureComponents(*pattern, *concrete, template_param_names, param_substitutions, pending)) {
+			if (!matchSignatureComponents(*pattern, *concrete, template_param_names, param_substitutions, pending, signature_packs)) {
 				return false;
 			}
 			if (pending.empty()) {
@@ -641,7 +660,7 @@ struct TemplatePattern {
 	static bool matchArgument(const TemplateTypeArg& pattern_arg, const TemplateTypeArg& concrete_arg,
 		const std::unordered_set<StringHandle, StringHandleHash>& template_param_names,
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions,
-		std::span<const TemplateParameterNode> template_params) {
+		std::span<const TemplateParameterNode> template_params, std::vector<TemplateBinding>& signature_packs) {
 		// Find the template parameter name for this pattern position
 		// The pattern_arg contains the type from the pattern (e.g., T for pattern T&)
 		// We need to check if the base types match and the modifiers match
@@ -744,7 +763,7 @@ struct TemplatePattern {
 		const bool structured_callable_argument = pattern_arg.hasFunctionSignature() && pattern_arg.functionSignature().hasStructuredTypes() &&
 			pattern_arg.category() == concrete_arg.category();
 		if ((bare_function_argument || pattern_arg.category() == TypeCategory::FunctionPointer || pattern_arg.category() == TypeCategory::MemberFunctionPointer) &&
-			!matchFunctionSignature(pattern_arg, concrete_arg, template_param_names, param_substitutions)) {
+			!matchFunctionSignature(pattern_arg, concrete_arg, template_param_names, param_substitutions, signature_packs)) {
 			FLASH_LOG(Templates, Trace, "  FAILED: function signature mismatch");
 			return false;
 		}
@@ -1029,34 +1048,28 @@ struct TemplatePattern {
 			}
 			return true;
 		};
-		// A trailing callable signature pack is a complete group, not the
-		// representative element recorded during signature comparison.
-		const auto bind_signature_packs = [&](const TemplateTypeArg& pattern, const TemplateTypeArg& concrete) {
-			if (!pattern.hasFunctionSignature() || !concrete.hasFunctionSignature()) return true;
-			const FunctionSignature& pattern_sig = pattern.functionSignature();
-			const FunctionType* pack = trailingSignaturePack(pattern_sig);
-			if (pack == nullptr) return true;
-			const StringHandle pack_name = signaturePackName(*pack);
-			if (!pack_name.isValid() || !names.count(pack_name)) return false;
-			const size_t pack_index = parameter_index(pack_name);
-			if (pack_index == template_params.size() || !template_params[pack_index].is_variadic()) return false;
-			const size_t fixed_count = pattern_sig.parameter_types().size() - 1;
-			const auto& concrete_parameters = concrete.functionSignature().parameter_types();
-			if (concrete_parameters.size() < fixed_count) return false;
-			std::vector<TemplateTypeArg> arguments;
-			for (size_t index = fixed_count; index < concrete_parameters.size(); ++index) {
-				arguments.push_back(deducedArgFromFunctionParameter(concrete_parameters[index]));
+		std::vector<TemplateBinding> signature_packs;
+		const auto match_and_bind_argument = [&](const TemplateTypeArg& pattern, const TemplateTypeArg& concrete, auto& scalar_deductions) {
+			signature_packs.clear();
+			if (!matchArgument(pattern, concrete, names, scalar_deductions, template_params, signature_packs) || !bind_inner_packs(pattern, concrete)) {
+				return false;
 			}
-			return bind_pack(pack_index, arguments);
+			for (const TemplateBinding& pack : signature_packs) {
+				const size_t index = parameter_index(pack.name);
+				if (index == template_params.size() || !template_params[index].is_variadic() || !bind_pack(index, pack.args)) {
+					return false;
+				}
+			}
+			return true;
 		};
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> scalar_deductions;
 		size_t concrete_index = 0;
 		for (size_t pattern_index = 0; pattern_index < pattern_args.size(); ++pattern_index) {
 			const TemplateTypeArg& pattern = pattern_args[pattern_index];
 			if (!pattern.is_pack) {
-				if (concrete_index == concrete_args.size() || !matchArgument(pattern, concrete_args[concrete_index], names, scalar_deductions, template_params) ||
-					!bind_inner_packs(pattern, concrete_args[concrete_index]) ||
-					!bind_signature_packs(pattern, concrete_args[concrete_index])) return false;
+				if (concrete_index == concrete_args.size() || !match_and_bind_argument(pattern, concrete_args[concrete_index], scalar_deductions)) {
+					return false;
+				}
 				++concrete_index;
 				continue;
 			}
@@ -1084,9 +1097,9 @@ struct TemplatePattern {
 				for (const TemplateBinding& binding : deduced_bindings) {
 					if (binding.is_pack) element_deductions.erase(binding.name);
 				}
-				if (!matchArgument(pattern, concrete_args[concrete_index], names, element_deductions, template_params) ||
-					!bind_inner_packs(pattern, concrete_args[concrete_index]) ||
-					!bind_signature_packs(pattern, concrete_args[concrete_index])) return false;
+				if (!match_and_bind_argument(pattern, concrete_args[concrete_index], element_deductions)) {
+					return false;
+				}
 				for (size_t index = 0; index < current_packs.size(); ++index) {
 					const auto element = element_deductions.find(template_params[current_packs[index]].nameHandle());
 					if (element == element_deductions.end()) return false;
