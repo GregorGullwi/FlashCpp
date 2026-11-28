@@ -132,9 +132,8 @@ missing record for a published environment fails closed.
 canonical pattern import coverage and then delete the fallback.
 
 Remaining unsupported callable shapes are dependent noexcept expressions,
-reference returns, member-pointer callables, and ordered declarators with a
-non-pointer component (nested function, array, reference, or member-pointer
-spine).
+member-pointer callables, and ordered declarators with a non-pointer component
+(nested function, array, reference, or member-pointer spine).
 The fallback also remains for non-type-parameter argument shapes and for
 patterns whose concept or requires-clause argument identity cannot be published.
 

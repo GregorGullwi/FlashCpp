@@ -2781,6 +2781,16 @@ try_type_template_argument_parse:
 			return std::nullopt;
 		}
 
+		// [dcl.ref]/1 and [dcl.fct]/1: a reference on a callable's return type is
+		// written before its declarator (`T& (*)(T)`). The template-parameter
+		// fast path in parse_type_specifier returns before consuming it, so take
+		// it here and carry it into the function signature below.
+		if (peek() == "&"_tok || peek() == "&&"_tok) {
+			const bool rvalue_reference = peek() == "&&"_tok;
+			advance();
+			type_result.node()->as<TypeSpecifierNode>().set_reference_qualifier(
+				rvalue_reference ? ReferenceQualifier::RValueReference : ReferenceQualifier::LValueReference);
+		}
 		// Successfully parsed a type
 		TypeSpecifierNode& type_node = type_result.node()->as<TypeSpecifierNode>();
 		// Reference-to-array type-ids use a parenthesized declarator group that
@@ -3008,6 +3018,7 @@ try_type_template_argument_parse:
 						func_sig.return_type_index = type_node.type_index();
 						func_sig.return_pointer_depth = static_cast<int>(type_node.runtime_pointer_depth());
 						func_sig.return_reference_qualifier = type_node.reference_qualifier();
+						type_node.set_reference_qualifier(ReferenceQualifier::None);
 						func_sig.setParameterTypes(std::move(param_types));
 						func_sig.calling_convention = paren_calling_convention;
 						apply_parsed_function_type_qualifiers(
@@ -3073,6 +3084,7 @@ try_type_template_argument_parse:
 					func_sig.return_type_index = type_node.type_index();
 					func_sig.return_pointer_depth = static_cast<int>(type_node.runtime_pointer_depth());
 					func_sig.return_reference_qualifier = type_node.reference_qualifier();
+					type_node.set_reference_qualifier(ReferenceQualifier::None);
 					func_sig.setParameterTypes(std::move(func_param_types));
 					func_sig.calling_convention = direct_function_calling_convention;
 					FlashCpp::MemberQualifiers qualifiers;

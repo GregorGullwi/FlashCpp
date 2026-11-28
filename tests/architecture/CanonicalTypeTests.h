@@ -4343,6 +4343,65 @@ inline void checkSignaturePackPartialPatternIdentityIndependence() {
 		reverse_patterns.empty);
 }
 
+// [dcl.fct]/1 and [dcl.ref]/1: a reference return is part of a callable's
+// canonical identity. Reversed interning must not merge it with a value return
+// or with a reference-to-function shape, and the environment must split on it.
+inline void checkReferenceReturnPartialPatternIdentityIndependence() {
+	const TemplateDeclId primary{8781};
+	const StringHandle first_identity = StringTable::getOrInternStringHandle("reference-return-pattern-first");
+	const StringHandle second_identity = StringTable::getOrInternStringHandle("reference-return-pattern-second");
+	struct Patterns {
+		TypeId reference_return;
+		TypeId value_return;
+		TypeId reference_to_function;
+	};
+	const auto build = [&](CanonicalTypeTable& table, bool reverse) {
+		if (reverse) {
+			table.builtin(CanonicalBuiltinKind::Char);
+		}
+		const TypeId parameter = table.templateParameter(primary, 0);
+		const TypeId integer_parameters[] = {table.builtin(CanonicalBuiltinKind::Int)};
+		const auto make_function = [&table](TypeId return_type, std::span<const TypeId> parameters) {
+			return table.function(return_type, parameters, false, CVQualifier::None, ReferenceQualifier::None, false,
+				CanonicalCallingConvention::Default, CanonicalDllLinkage::None, ExprId{});
+		};
+		const auto make_pattern = [&](TypeId callable) {
+			const CanonicalTemplateArgument arguments[] = {CanonicalTemplateArgument::makeType(callable)};
+			return table.templateSpecialization(primary, arguments);
+		};
+		const TypeId reference_return = make_function(table.reference(parameter, ReferenceQualifier::LValueReference), integer_parameters);
+		return Patterns{
+			make_pattern(reference_return),
+			make_pattern(make_function(parameter, integer_parameters)),
+			make_pattern(table.reference(make_function(parameter, integer_parameters), ReferenceQualifier::LValueReference)),
+		};
+	};
+	CanonicalTypeTable forward;
+	const Patterns forward_patterns = build(forward, false);
+	require(forward_patterns.reference_return != forward_patterns.value_return);
+	require(forward_patterns.reference_return != forward_patterns.reference_to_function);
+	CanonicalTypeTable reverse;
+	const Patterns reverse_patterns = build(reverse, true);
+	require(sameStructure(forward, forward_patterns.reference_return, reverse, reverse_patterns.reference_return));
+	require(!sameStructure(forward, forward_patterns.reference_return, reverse, reverse_patterns.value_return));
+	require(!sameStructure(forward, forward_patterns.reference_return, reverse, reverse_patterns.reference_to_function));
+	const auto check_environment_partition = [&](TemplateDeclTable& decls, TemplateDeclId pattern_primary, TypeId pattern,
+		TypeId other_pattern) {
+		const TemplateDeclId first = decls.publishClassPartialEnvironment(pattern_primary, pattern, first_identity);
+		require(decls.publishClassPartialEnvironment(pattern_primary, pattern, first_identity) == first);
+		require(decls.publishClassPartialEnvironment(pattern_primary, pattern, second_identity) != first);
+		require(decls.publishClassPartialEnvironment(pattern_primary, other_pattern, first_identity) != first);
+	};
+	const OwnerId owner{8782};
+	const StringHandle name = StringTable::getOrInternStringHandle("ReferenceReturnPartialIdentity");
+	TemplateDeclTable forward_decls;
+	const TemplateDeclId forward_primary = forward_decls.publishPrimaryClassTemplate(owner, name);
+	check_environment_partition(forward_decls, forward_primary, forward_patterns.reference_return, forward_patterns.value_return);
+	TemplateDeclTable reverse_decls;
+	const TemplateDeclId reverse_primary = reverse_decls.publishPrimaryClassTemplate(owner, name);
+	check_environment_partition(reverse_decls, reverse_primary, reverse_patterns.value_return, reverse_patterns.reference_return);
+}
+
 // The shape is a by-value query result; a future field must not quietly re-add
 // padding to it.
 static_assert(sizeof(CanonicalPointerShape) == 10, "pointer shape stays a packed by-value result");
@@ -4698,6 +4757,7 @@ inline int run() {
 	checkFunctionPointerPartialPatternIdentityIndependence();
 	checkDoublePointerPartialPatternIdentityIndependence();
 	checkSignaturePackPartialPatternIdentityIndependence();
+	checkReferenceReturnPartialPatternIdentityIndependence();
 	checkSpecializationFieldSchemas();
 	checkNestedFieldSchemas();
 	checkRecordMemberProperties();
