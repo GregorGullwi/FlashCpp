@@ -850,6 +850,13 @@ remaining pattern schemas by identity, and remove the name fallback.
    so a value-returning callable stays distinct and the pattern publishes its
    environment; `test_canonical_partial_reference_return_environment_ret0.cpp`
    pins exact selection, the mismatch control, and zero name fallback.
+   A callable's dependent `noexcept(expr)` now keeps its interned ExprId in the
+   canonical pattern environment instead of being rejected as an unresolved
+   retained expression; the matcher compares that identity when both sides
+   carry one, so a different exception specification cannot select the partial.
+   `test_canonical_partial_dependent_noexcept_environment_ret0.cpp` pins the
+   non-deduced plain-noexcept matches, the mismatched-signature and plain
+   `noexcept` controls, and zero name fallback.
    Supported alias-template arguments expand by
    alias declaration identity before registration. The structural
    matcher and canonical importer consume the same expanded pattern, so a
