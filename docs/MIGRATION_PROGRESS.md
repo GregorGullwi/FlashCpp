@@ -313,9 +313,10 @@ remaining pattern schemas by identity, and remove the name fallback.
    bridge cannot represent, and audit those boundaries before deleting them.
    Class-to-non-class reference binding now ranks through the canonical
    user-defined conversion selector ([dcl.init.ref]/5, [over.match.ref]/1)
-   instead of the syntax compatibility planner. This lowers the
+   instead of the syntax compatibility planner. On MSVC this lowers the
    `ast_to_ir_semantic` migration counter on the implicit copy/move ODR
-   regression from 42 to 40 without changing diagnostic contracts.
+   regression from 42 to 40; the clang target still reports 42, so the shared
+   baseline stays at 42. Diagnostic contracts are unchanged.
    Conversion-operator value tails now reuse the imported return and target
    `TypeId`s for exact matches, builtin conversions, and supported callable and
    class-value conversions. Reference tails use the canonical reference-argument
